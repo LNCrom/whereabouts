@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct FamilyLocatorApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var auth = AuthStore()
 

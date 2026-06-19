@@ -8,6 +8,7 @@ struct ContentView: View {
     @State private var familyMembers: [FamilyMember] = []
     @State private var selectedMember: FamilyMember?
     @State private var selectedTab: AppTab = .map
+    private let refreshTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
     private var visibleMembers: [FamilyMember] {
         familyMembers + cloudSharing.remoteMembers
@@ -48,16 +49,16 @@ struct ContentView: View {
             }
             .tag(AppTab.privacy)
         }
-        .onOpenURL { url in
-            cloudSharing.acceptInvite(from: url)
-            selectedTab = .privacy
-        }
         .onReceive(locationSharing.$currentLocation.compactMap { $0 }) { location in
             guard locationSharing.canShareLocation else { return }
             cloudSharing.publish(location: location, displayName: auth.profile?.displayName)
         }
         .onReceive(cloudSharing.$remoteMembers) { members in
             updateSelectionIfNeeded(with: familyMembers + members)
+        }
+        .onReceive(refreshTimer) { _ in
+            guard auth.canEnterApp else { return }
+            cloudSharing.fetchSharedLocations()
         }
         .onAppear {
             cloudSharing.fetchSharedLocations()

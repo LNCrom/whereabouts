@@ -1,7 +1,8 @@
 import Contacts
 import ContactsUI
-import MessageUI
+import CloudKit
 import SwiftUI
+import UIKit
 
 struct PeopleView: View {
     @Binding var members: [FamilyMember]
@@ -9,8 +10,7 @@ struct PeopleView: View {
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     @State private var isContactPickerPresented = false
-    @State private var messageInvite: InviteMessage?
-    @State private var shareInvite: InviteShare?
+    @State private var isCloudSharingPresented = false
 
     var body: some View {
         List {
@@ -25,9 +25,14 @@ struct PeopleView: View {
             }
 
             Section {
-                Label("Send a Whereabouts invite link", systemImage: "paperplane.fill")
-                Label("They open the link and approve sharing", systemImage: "checkmark.shield.fill")
-                Label("Their app publishes location through iCloud", systemImage: "icloud.fill")
+                Button {
+                    isCloudSharingPresented = true
+                } label: {
+                    Label(cloudSharing.sharingTitle, systemImage: "person.2.badge.plus")
+                }
+
+                Label("Apple sends and approves the iCloud invite", systemImage: "checkmark.icloud.fill")
+                Label("Approved members publish location into the shared circle", systemImage: "location.fill")
             } header: {
                 Text("Whereabouts sharing")
             } footer: {
@@ -92,11 +97,8 @@ struct PeopleView: View {
                 addContact(contact)
             }
         }
-        .sheet(item: $messageInvite) { invite in
-            MessageComposer(invite: invite)
-        }
-        .sheet(item: $shareInvite) { invite in
-            ShareSheet(items: [invite.message])
+        .sheet(isPresented: $isCloudSharingPresented) {
+            CloudSharingController(cloudSharing: cloudSharing)
         }
     }
 
@@ -132,21 +134,7 @@ struct PeopleView: View {
     }
 
     private func invite(_ member: FamilyMember) {
-        let inviteURL = cloudSharing.inviteURL.absoluteString
-        let message = """
-        Can you share your location with me in Whereabouts?
-
-        Open this invite on your iPhone:
-        \(inviteURL)
-
-        After you accept, allow Whereabouts to use your location so your live location appears on my map. Find My sharing cannot be imported into Whereabouts.
-        """
-
-        if MFMessageComposeViewController.canSendText(), let phoneNumber = member.phoneNumber {
-            messageInvite = InviteMessage(recipient: phoneNumber, body: message)
-        } else {
-            shareInvite = InviteShare(message: message)
-        }
+        isCloudSharingPresented = true
     }
 
     private func removeMembers(at offsets: IndexSet) {
@@ -162,17 +150,6 @@ struct PeopleView: View {
         let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
         return colors[members.count % colors.count]
     }
-}
-
-private struct InviteMessage: Identifiable {
-    let id = UUID()
-    var recipient: String
-    var body: String
-}
-
-private struct InviteShare: Identifiable {
-    let id = UUID()
-    var message: String
 }
 
 private struct PersonRow: View {
@@ -247,51 +224,18 @@ private struct ContactPicker: UIViewControllerRepresentable {
     }
 }
 
-private struct MessageComposer: UIViewControllerRepresentable {
-    var invite: InviteMessage
-    @Environment(\.dismiss) private var dismiss
+private struct CloudSharingController: UIViewControllerRepresentable {
+    @ObservedObject var cloudSharing: CloudLocationSharingStore
 
-    func makeUIViewController(context: Context) -> MFMessageComposeViewController {
-        let composer = MFMessageComposeViewController()
-        composer.messageComposeDelegate = context.coordinator
-        composer.recipients = [invite.recipient]
-        composer.body = invite.body
-        return composer
-    }
-
-    func updateUIViewController(_ uiViewController: MFMessageComposeViewController, context: Context) {
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(dismiss: dismiss)
-    }
-
-    final class Coordinator: NSObject, MFMessageComposeViewControllerDelegate {
-        var dismiss: DismissAction
-
-        init(dismiss: DismissAction) {
-            self.dismiss = dismiss
+    func makeUIViewController(context: Context) -> UICloudSharingController {
+        let controller = UICloudSharingController { controller, completion in
+            cloudSharing.prepareShare(controller, completion: completion)
         }
-
-        func messageComposeViewController(_ controller: MFMessageComposeViewController, didFinishWith result: MessageComposeResult) {
-            dismiss()
-        }
-    }
-}
-
-private struct ShareSheet: UIViewControllerRepresentable {
-    var items: [Any]
-    @Environment(\.dismiss) private var dismiss
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        let controller = UIActivityViewController(activityItems: items, applicationActivities: nil)
-        controller.completionWithItemsHandler = { _, _, _, _ in
-            dismiss()
-        }
+        cloudSharing.configure(controller)
         return controller
     }
 
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
+    func updateUIViewController(_ uiViewController: UICloudSharingController, context: Context) {
     }
 }
 

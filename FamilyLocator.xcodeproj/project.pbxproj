@@ -19,6 +19,7 @@
 		1A00001C2C17500100AA0001 /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001C2C17500100AA0000 /* AuthStore.swift */; };
 		1A00001D2C17500100AA0001 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001D2C17500100AA0000 /* SignInView.swift */; };
 		1A00001E2C17500100AA0001 /* LockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001E2C17500100AA0000 /* LockView.swift */; };
+		1A00001F2C17500100AA0001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001F2C17500100AA0000 /* AppDelegate.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -37,6 +38,7 @@
 		1A00001C2C17500100AA0000 /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
 		1A00001D2C17500100AA0000 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		1A00001E2C17500100AA0000 /* LockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockView.swift; sourceTree = "<group>"; };
+		1A00001F2C17500100AA0000 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -63,6 +65,7 @@
 			children = (
 				1A0000012C17500100AA0000 /* FamilyLocatorApp.swift */,
 				1A00001C2C17500100AA0000 /* AuthStore.swift */,
+				1A00001F2C17500100AA0000 /* AppDelegate.swift */,
 				1A00001D2C17500100AA0000 /* SignInView.swift */,
 				1A00001E2C17500100AA0000 /* LockView.swift */,
 				1A0000022C17500100AA0000 /* Models.swift */,
@@ -172,6 +175,7 @@
 				1A0000172C17500100AA0001 /* LocationSharingStore.swift in Sources */,
 				1A0000192C17500100AA0001 /* CloudLocationSharingStore.swift in Sources */,
 				1A00001C2C17500100AA0001 /* AuthStore.swift in Sources */,
+				1A00001F2C17500100AA0001 /* AppDelegate.swift in Sources */,
 				1A00001D2C17500100AA0001 /* SignInView.swift in Sources */,
 				1A00001E2C17500100AA0001 /* LockView.swift in Sources */,
 			);

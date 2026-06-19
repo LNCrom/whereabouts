@@ -34,8 +34,9 @@ final class LocationSharingStore: NSObject, ObservableObject {
         super.init()
         locationManager.delegate = self
         locationManager.activityType = .otherNavigation
-        locationManager.pausesLocationUpdatesAutomatically = true
+        locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        updateLocationServices()
     }
 
     var canShareLocation: Bool {
@@ -95,6 +96,7 @@ final class LocationSharingStore: NSObject, ObservableObject {
 
     private func updateLocationServices() {
         locationManager.desiredAccuracy = allowsPreciseSharing ? kCLLocationAccuracyBest : kCLLocationAccuracyKilometer
+        locationManager.allowsBackgroundLocationUpdates = authorizationStatus == .authorizedAlways && isLiveSharingEnabled
 
         guard isLiveSharingEnabled, authorizationStatus.allowsLocationUse else {
             locationManager.stopUpdatingLocation()

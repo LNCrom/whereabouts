@@ -61,6 +61,7 @@ struct ContentView: View {
             cloudSharing.fetchSharedLocations()
         }
         .onAppear {
+            locationSharing.refreshCurrentLocation()
             cloudSharing.fetchSharedLocations()
             updateSelectionIfNeeded(with: visibleMembers)
         }

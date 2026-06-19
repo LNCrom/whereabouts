@@ -67,6 +67,10 @@ final class CloudLocationSharingStore: ObservableObject {
             }
         }
 
+        if let pendingMetadata = AppDelegate.consumePendingShareMetadata() {
+            acceptShare(pendingMetadata)
+        }
+
         updateAccountStatus()
     }
 
@@ -273,9 +277,7 @@ final class CloudLocationSharingStore: ObservableObject {
 
             switch result {
             case .success(let userRecordName):
-                let predicate = NSPredicate(format: "userRecordName != %@", userRecordName)
-                let query = CKQuery(recordType: Constants.locationRecordType, predicate: predicate)
-                query.sortDescriptors = [NSSortDescriptor(key: "updatedAt", ascending: false)]
+                let query = CKQuery(recordType: Constants.locationRecordType, predicate: NSPredicate(value: true))
 
                 var records: [CKRecord] = []
                 let operation = CKQueryOperation(query: query)
@@ -293,7 +295,13 @@ final class CloudLocationSharingStore: ObservableObject {
 
                         switch result {
                         case .success:
-                            self.remoteMembers = records.compactMap(self.member(from:))
+                            let visibleRecords = records
+                                .filter { ($0["userRecordName"] as? String) != userRecordName }
+                                .sorted {
+                                    (($0["updatedAt"] as? Date) ?? .distantPast) >
+                                        (($1["updatedAt"] as? Date) ?? .distantPast)
+                                }
+                            self.remoteMembers = visibleRecords.compactMap(self.member(from:))
                             self.statusMessage = self.remoteMembers.isEmpty
                                 ? "No one has accepted and published a Whereabouts location yet."
                                 : "Loaded \(self.remoteMembers.count) shared location\(self.remoteMembers.count == 1 ? "" : "s")."

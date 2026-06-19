@@ -10,7 +10,8 @@ struct PeopleView: View {
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     @State private var isContactPickerPresented = false
-    @State private var isCloudSharingPresented = false
+    @State private var preparedCloudShare: PreparedCloudShare?
+    @State private var inviteErrorMessage: String?
 
     var body: some View {
         List {
@@ -26,10 +27,15 @@ struct PeopleView: View {
 
             Section {
                 Button {
-                    isCloudSharingPresented = true
+                    prepareCloudInvite()
                 } label: {
-                    Label(cloudSharing.sharingTitle, systemImage: "person.2.badge.plus")
+                    if cloudSharing.isPreparingShare {
+                        Label("Preparing invite...", systemImage: "icloud.and.arrow.up")
+                    } else {
+                        Label(cloudSharing.sharingTitle, systemImage: "person.2.badge.plus")
+                    }
                 }
+                .disabled(cloudSharing.isPreparingShare)
 
                 Label("Apple sends and approves the iCloud invite", systemImage: "checkmark.icloud.fill")
                 Label("Approved members publish location into the shared circle", systemImage: "location.fill")
@@ -69,11 +75,15 @@ struct PeopleView: View {
                                 Button {
                                     invite(member)
                                 } label: {
-                                    Label("Send Whereabouts invite", systemImage: "paperplane.fill")
+                                    Label(
+                                        cloudSharing.isPreparingShare ? "Preparing invite..." : "Send Whereabouts invite",
+                                        systemImage: cloudSharing.isPreparingShare ? "icloud.and.arrow.up" : "paperplane.fill"
+                                    )
                                         .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
+                                .disabled(cloudSharing.isPreparingShare)
                             }
                         }
                     }
@@ -97,8 +107,19 @@ struct PeopleView: View {
                 addContact(contact)
             }
         }
-        .sheet(isPresented: $isCloudSharingPresented) {
-            CloudSharingController(cloudSharing: cloudSharing)
+        .sheet(item: $preparedCloudShare) { preparedShare in
+            CloudSharingController(
+                share: preparedShare.share,
+                container: preparedShare.container,
+                cloudSharing: cloudSharing
+            )
+        }
+        .alert("Could not prepare invite", isPresented: inviteErrorBinding) {
+            Button("OK", role: .cancel) {
+                inviteErrorMessage = nil
+            }
+        } message: {
+            Text(inviteErrorMessage ?? "Try again in a moment.")
         }
     }
 
@@ -134,7 +155,21 @@ struct PeopleView: View {
     }
 
     private func invite(_ member: FamilyMember) {
-        isCloudSharingPresented = true
+        prepareCloudInvite()
+    }
+
+    private func prepareCloudInvite() {
+        cloudSharing.prepareShare { result in
+            switch result {
+            case .success(let preparedShare):
+                preparedCloudShare = PreparedCloudShare(
+                    share: preparedShare.share,
+                    container: preparedShare.container
+                )
+            case .failure(let error):
+                inviteErrorMessage = error.localizedDescription
+            }
+        }
     }
 
     private func removeMembers(at offsets: IndexSet) {
@@ -150,6 +185,22 @@ struct PeopleView: View {
         let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
         return colors[members.count % colors.count]
     }
+
+    private var inviteErrorBinding: Binding<Bool> {
+        Binding {
+            inviteErrorMessage != nil
+        } set: { isPresented in
+            if isPresented == false {
+                inviteErrorMessage = nil
+            }
+        }
+    }
+}
+
+private struct PreparedCloudShare: Identifiable {
+    let id = UUID()
+    let share: CKShare
+    let container: CKContainer
 }
 
 private struct PersonRow: View {
@@ -225,12 +276,12 @@ private struct ContactPicker: UIViewControllerRepresentable {
 }
 
 private struct CloudSharingController: UIViewControllerRepresentable {
+    var share: CKShare
+    var container: CKContainer
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     func makeUIViewController(context: Context) -> UICloudSharingController {
-        let controller = UICloudSharingController { controller, completion in
-            cloudSharing.prepareShare(controller, completion: completion)
-        }
+        let controller = UICloudSharingController(share: share, container: container)
         cloudSharing.configure(controller)
         return controller
     }

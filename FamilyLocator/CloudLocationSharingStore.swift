@@ -137,37 +137,45 @@ final class CloudLocationSharingStore: ObservableObject {
         _ controller: UICloudSharingController,
         completion: @escaping (CKShare?, CKContainer?, Error?) -> Void
     ) {
+        prepareShare { result in
+            switch result {
+            case .success(let preparedShare):
+                completion(preparedShare.share, preparedShare.container, nil)
+            case .failure(let error):
+                completion(nil, self.container, error)
+            }
+        }
+    }
+
+    func prepareShare(completion: @escaping (Result<(share: CKShare, container: CKContainer), Error>) -> Void) {
         isPreparingShare = true
         statusMessage = "Preparing secure iCloud share..."
 
         ensureOwnerZone { [weak self] result in
             guard let self else { return }
 
-            Task { @MainActor in
-                self.isPreparingShare = false
-            }
-
             switch result {
             case .success(let zoneID):
                 self.fetchOrCreateZoneShare(in: zoneID) { result in
-                    switch result {
-                    case .success(let share):
-                        Task { @MainActor in
+                    Task { @MainActor in
+                        self.isPreparingShare = false
+
+                        switch result {
+                        case .success(let share):
                             self.statusMessage = "Secure iCloud invite ready."
-                        }
-                        completion(share, self.container, nil)
-                    case .failure(let error):
-                        Task { @MainActor in
+                            completion(.success((share, self.container)))
+                        case .failure(let error):
                             self.statusMessage = "Could not create iCloud share: \(error.localizedDescription)"
+                            completion(.failure(error))
                         }
-                        completion(nil, self.container, error)
                     }
                 }
             case .failure(let error):
                 Task { @MainActor in
+                    self.isPreparingShare = false
                     self.statusMessage = "Could not prepare iCloud share: \(error.localizedDescription)"
+                    completion(.failure(error))
                 }
-                completion(nil, self.container, error)
             }
         }
     }
@@ -342,18 +350,35 @@ final class CloudLocationSharingStore: ObservableObject {
 
     private func ensureOwnerZone(completion: @escaping (Result<CKRecordZone.ID, Error>) -> Void) {
         let zoneID = CKRecordZone.ID(zoneName: Constants.zoneName, ownerName: CKCurrentUserDefaultName)
-        let zone = CKRecordZone(zoneID: zoneID)
-        privateDatabase.save(zone) { [weak self] _, error in
+        privateDatabase.fetch(withRecordZoneID: zoneID) { [weak self] zone, error in
             guard let self else { return }
 
-            if let ckError = error as? CKError, ckError.code != .serverRecordChanged {
+            if zone != nil {
+                Task { @MainActor in
+                    self.defaults.set(zoneID.zoneName, forKey: Keys.privateZoneName)
+                    completion(.success(zoneID))
+                }
+                return
+            }
+
+            if let ckError = error as? CKError, ckError.code != .zoneNotFound, ckError.code != .unknownItem {
                 completion(.failure(ckError))
                 return
             }
 
-            Task { @MainActor in
-                self.defaults.set(zoneID.zoneName, forKey: Keys.privateZoneName)
-                completion(.success(zoneID))
+            let zone = CKRecordZone(zoneID: zoneID)
+            self.privateDatabase.save(zone) { [weak self] _, error in
+                guard let self else { return }
+
+                if let ckError = error as? CKError, ckError.code != .serverRecordChanged {
+                    completion(.failure(ckError))
+                    return
+                }
+
+                Task { @MainActor in
+                    self.defaults.set(zoneID.zoneName, forKey: Keys.privateZoneName)
+                    completion(.success(zoneID))
+                }
             }
         }
     }

@@ -5,6 +5,7 @@ struct DashboardView: View {
     var members: [FamilyMember]
     @Binding var selectedMember: FamilyMember
     @ObservedObject var locationSharing: LocationSharingStore
+    @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     @State private var cameraPosition: MapCameraPosition = .region(
         MKCoordinateRegion(
@@ -32,6 +33,7 @@ struct DashboardView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     locationSharing.refreshCurrentLocation()
+                    cloudSharing.fetchSharedLocations()
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -217,7 +219,8 @@ struct DashboardView_Previews: PreviewProvider {
             DashboardView(
                 members: FamilyFixtures.members,
                 selectedMember: .constant(FamilyFixtures.members[0]),
-                locationSharing: LocationSharingStore()
+                locationSharing: LocationSharingStore(),
+                cloudSharing: CloudLocationSharingStore()
             )
         }
     }

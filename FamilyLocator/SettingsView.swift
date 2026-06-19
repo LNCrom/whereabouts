@@ -3,11 +3,12 @@ import UIKit
 
 struct SettingsView: View {
     @ObservedObject var locationSharing: LocationSharingStore
+    @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     var body: some View {
         List {
             Section {
-                PrivacyHeader(locationSharing: locationSharing)
+                PrivacyHeader(locationSharing: locationSharing, cloudSharing: cloudSharing)
             }
 
             Section("Sharing") {
@@ -63,6 +64,33 @@ struct SettingsView: View {
 
             Section {
                 PermissionRow(
+                    title: "iCloud circle",
+                    value: cloudSharing.hasActiveCircle ? "Active" : "Not joined",
+                    systemImage: "icloud.fill",
+                    tint: .blue
+                )
+
+                PermissionRow(
+                    title: "Shared people",
+                    value: "\(cloudSharing.remoteMembers.count)",
+                    systemImage: "person.2.fill",
+                    tint: .green
+                )
+
+                Button {
+                    locationSharing.refreshCurrentLocation()
+                    cloudSharing.fetchSharedLocations()
+                } label: {
+                    Label("Refresh Whereabouts sharing", systemImage: "arrow.clockwise")
+                }
+            } header: {
+                Text("Whereabouts Circle")
+            } footer: {
+                Text(cloudSharing.statusMessage)
+            }
+
+            Section {
+                PermissionRow(
                     title: "Core Location",
                     value: "Used by this app",
                     systemImage: "location.north.line.fill",
@@ -71,7 +99,7 @@ struct SettingsView: View {
 
                 PermissionRow(
                     title: "iCloud sharing",
-                    value: "Next backend step",
+                    value: "Whereabouts circle",
                     systemImage: "icloud.fill",
                     tint: .blue
                 )
@@ -85,7 +113,7 @@ struct SettingsView: View {
             } header: {
                 Text("Apple services")
             } footer: {
-                Text("Whereabouts can use iOS location permission and iCloud later, but Apple does not provide third-party access to Find My people locations.")
+                Text("Whereabouts can use iOS location permission and iCloud for users who install and approve the app. Apple does not provide third-party access to Find My people locations.")
             }
         }
         .navigationTitle("Privacy")
@@ -99,6 +127,7 @@ struct SettingsView: View {
 
 private struct PrivacyHeader: View {
     @ObservedObject var locationSharing: LocationSharingStore
+    @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     var body: some View {
         HStack(spacing: 14) {
@@ -111,12 +140,24 @@ private struct PrivacyHeader: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Family sharing only")
                     .font(.headline)
-                Text(locationSharing.isLiveSharingEnabled ? "You can pause sharing from this device anytime." : "Sharing is paused on this device.")
+                Text(headerMessage)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 6)
+    }
+
+    private var headerMessage: String {
+        if locationSharing.isLiveSharingEnabled == false {
+            return "Sharing is paused on this device."
+        }
+
+        if cloudSharing.hasActiveCircle {
+            return "This device can publish to your Whereabouts circle."
+        }
+
+        return "Create or accept an invite before anyone can see this device."
     }
 }
 
@@ -146,7 +187,7 @@ private struct PermissionRow: View {
 struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
         NavigationStack {
-            SettingsView(locationSharing: LocationSharingStore())
+            SettingsView(locationSharing: LocationSharingStore(), cloudSharing: CloudLocationSharingStore())
         }
     }
 }

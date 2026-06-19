@@ -2,17 +2,23 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var locationSharing = LocationSharingStore()
+    @StateObject private var cloudSharing = CloudLocationSharingStore()
     @State private var familyMembers = FamilyFixtures.members
     @State private var selectedMember = FamilyFixtures.members[0]
     @State private var selectedTab: AppTab = .map
+
+    private var visibleMembers: [FamilyMember] {
+        familyMembers + cloudSharing.remoteMembers
+    }
 
     var body: some View {
         TabView(selection: $selectedTab) {
             NavigationStack {
                 DashboardView(
-                    members: familyMembers,
+                    members: visibleMembers,
                     selectedMember: $selectedMember,
-                    locationSharing: locationSharing
+                    locationSharing: locationSharing,
+                    cloudSharing: cloudSharing
                 )
             }
             .tabItem {
@@ -21,7 +27,11 @@ struct ContentView: View {
             .tag(AppTab.map)
 
             NavigationStack {
-                PeopleView(members: $familyMembers, selectedMember: $selectedMember)
+                PeopleView(
+                    members: $familyMembers,
+                    selectedMember: $selectedMember,
+                    cloudSharing: cloudSharing
+                )
             }
             .tabItem {
                 Label("People", systemImage: "person.2.fill")
@@ -29,12 +39,23 @@ struct ContentView: View {
             .tag(AppTab.people)
 
             NavigationStack {
-                SettingsView(locationSharing: locationSharing)
+                SettingsView(locationSharing: locationSharing, cloudSharing: cloudSharing)
             }
             .tabItem {
                 Label("Privacy", systemImage: "shield.checkered")
             }
             .tag(AppTab.privacy)
+        }
+        .onOpenURL { url in
+            cloudSharing.acceptInvite(from: url)
+            selectedTab = .privacy
+        }
+        .onReceive(locationSharing.$currentLocation.compactMap { $0 }) { location in
+            guard locationSharing.canShareLocation else { return }
+            cloudSharing.publish(location: location)
+        }
+        .onAppear {
+            cloudSharing.fetchSharedLocations()
         }
     }
 }

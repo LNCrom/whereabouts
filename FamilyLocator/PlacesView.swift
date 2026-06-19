@@ -6,6 +6,7 @@ import SwiftUI
 struct PeopleView: View {
     @Binding var members: [FamilyMember]
     @Binding var selectedMember: FamilyMember
+    @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     @State private var isContactPickerPresented = false
     @State private var messageInvite: InviteMessage?
@@ -20,17 +21,17 @@ struct PeopleView: View {
                     Label("Select from Contacts", systemImage: "person.crop.circle.badge.plus")
                 }
             } footer: {
-                Text("The free native iOS option is Apple Find My. It works without Whereabouts on their phone, but Apple keeps that live location inside Find My.")
+                Text("Whereabouts sharing uses iCloud and requires the other person to open Whereabouts and approve location permission. Apple does not let this app import Find My people locations.")
             }
 
             Section {
-                Label("Ask them to share from Find My", systemImage: "location.circle.fill")
-                Label("View no-download sharing in Apple's Find My app", systemImage: "magnifyingglass.circle.fill")
-                Label("Use Whereabouts map after they install and share here", systemImage: "map.fill")
+                Label("Send a Whereabouts invite link", systemImage: "paperplane.fill")
+                Label("They open the link and approve sharing", systemImage: "checkmark.shield.fill")
+                Label("Their app publishes location through iCloud", systemImage: "icloud.fill")
             } header: {
-                Text("Native iOS sharing")
+                Text("Whereabouts sharing")
             } footer: {
-                Text("Apple does not provide third-party apps access to Find My people locations, so Whereabouts cannot import that native location feed.")
+                Text(cloudSharing.statusMessage)
             }
 
             Section("Family Circle") {
@@ -47,7 +48,7 @@ struct PeopleView: View {
                             Button {
                                 invite(member)
                             } label: {
-                                Label("Request Find My sharing", systemImage: "paperplane.fill")
+                                Label("Send Whereabouts invite", systemImage: "paperplane.fill")
                                     .frame(maxWidth: .infinity)
                             }
                             .buttonStyle(.bordered)
@@ -114,16 +115,14 @@ struct PeopleView: View {
     }
 
     private func invite(_ member: FamilyMember) {
+        let inviteURL = cloudSharing.inviteURL.absoluteString
         let message = """
-        Can you share your location with me using Apple Find My?
+        Can you share your location with me in Whereabouts?
 
-        On your iPhone:
-        1. Open Find My.
-        2. Tap People.
-        3. Tap +, then Share My Location.
-        4. Choose me and select Indefinitely, Until End of Day, or One Hour.
+        Open this invite on your iPhone:
+        \(inviteURL)
 
-        This is the free native iOS option and does not require Whereabouts. If you also install Whereabouts later, you can choose to share there so I can see you inside my Whereabouts map.
+        After you accept, allow Whereabouts to use your location so your live location appears on my map. Find My sharing cannot be imported into Whereabouts.
         """
 
         if MFMessageComposeViewController.canSendText(), let phoneNumber = member.phoneNumber {
@@ -284,7 +283,8 @@ struct PeopleView_Previews: PreviewProvider {
         NavigationStack {
             PeopleView(
                 members: .constant(FamilyFixtures.members),
-                selectedMember: .constant(FamilyFixtures.members[0])
+                selectedMember: .constant(FamilyFixtures.members[0]),
+                cloudSharing: CloudLocationSharingStore()
             )
         }
     }

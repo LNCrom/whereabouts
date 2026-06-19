@@ -3,7 +3,7 @@ import SwiftUI
 
 struct DashboardView: View {
     var members: [FamilyMember]
-    @Binding var selectedMember: FamilyMember
+    @Binding var selectedMember: FamilyMember?
     @ObservedObject var locationSharing: LocationSharingStore
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
@@ -22,9 +22,15 @@ struct DashboardView: View {
                 cameraPosition: $cameraPosition
             )
 
-            SelectedMemberCard(member: selectedMember)
-                .padding()
-                .background(Color(.systemGroupedBackground))
+            if let selectedMember {
+                SelectedMemberCard(member: selectedMember)
+                    .padding()
+                    .background(Color(.systemGroupedBackground))
+            } else {
+                EmptyLocationCard()
+                    .padding()
+                    .background(Color(.systemGroupedBackground))
+            }
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("Locations")
@@ -41,21 +47,42 @@ struct DashboardView: View {
             }
         }
         .onChange(of: selectedMember) { _, newValue in
-            withAnimation(.easeInOut(duration: 0.25)) {
-                cameraPosition = .region(
-                    MKCoordinateRegion(
-                        center: newValue.coordinate,
-                        span: MKCoordinateSpan(latitudeDelta: 0.035, longitudeDelta: 0.035)
-                    )
-                )
+            guard let newValue else { return }
+            focusMap(on: newValue, animated: true)
+        }
+        .onChange(of: members) { _, newValue in
+            guard selectedMember == nil, let firstMember = newValue.first else { return }
+            selectedMember = firstMember
+            focusMap(on: firstMember, animated: false)
+        }
+        .onAppear {
+            if let selectedMember {
+                focusMap(on: selectedMember, animated: false)
             }
+        }
+    }
+
+    private func focusMap(on member: FamilyMember, animated: Bool) {
+        let update = {
+            cameraPosition = .region(
+                MKCoordinateRegion(
+                    center: member.coordinate,
+                    span: MKCoordinateSpan(latitudeDelta: 0.035, longitudeDelta: 0.035)
+                )
+            )
+        }
+
+        if animated {
+            withAnimation(.easeInOut(duration: 0.25), update)
+        } else {
+            update()
         }
     }
 }
 
 private struct FamilyMapView: View {
     var members: [FamilyMember]
-    @Binding var selectedMember: FamilyMember
+    @Binding var selectedMember: FamilyMember?
     @Binding var cameraPosition: MapCameraPosition
 
     private var sharingMembers: [FamilyMember] {
@@ -64,7 +91,8 @@ private struct FamilyMapView: View {
 
     private var selectedMemberID: Binding<FamilyMember.ID?> {
         Binding {
-            selectedMember.isLocationShared ? selectedMember.id : nil
+            guard let selectedMember, selectedMember.isLocationShared else { return nil }
+            return selectedMember.id
         } set: { newValue in
             guard let newValue, let member = members.first(where: { $0.id == newValue }) else { return }
             selectedMember = member
@@ -107,8 +135,36 @@ private struct FamilyMapView: View {
     }
 }
 
+private struct EmptyLocationCard: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.2.badge.plus")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 42, height: 42)
+                    .background(Color.blue.opacity(0.12), in: Circle())
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("No shared locations yet")
+                        .font(.title3.weight(.bold))
+                    Text("Invite someone from People, or open a Whereabouts invite on another device.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+    }
+}
+
 private struct SelectedMemberCard: View {
     var member: FamilyMember
+
+    private let metricColumns = [
+        GridItem(.adaptive(minimum: 112), spacing: 10, alignment: .leading)
+    ]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -131,18 +187,18 @@ private struct SelectedMemberCard: View {
             DetailRow(title: "Time at location", value: member.timeAtLocationSummary, systemImage: "timer")
             DetailRow(title: "Time arrived at location", value: member.arrivedAtSummary, systemImage: "arrow.down.circle.fill")
 
-            HStack(spacing: 10) {
+            LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
                 MetricPill(systemImage: "iphone", text: member.device)
                 MetricPill(systemImage: "battery.75percent", text: "\(member.batteryLevel)%")
                 MetricPill(systemImage: "clock.arrow.circlepath", text: member.updatedAt)
-            }
 
-            if let speed = member.speed {
-                MetricPill(systemImage: "speedometer", text: speed)
-            }
+                if let speed = member.speed {
+                    MetricPill(systemImage: "speedometer", text: speed)
+                }
 
-            if let eta = member.eta {
-                MetricPill(systemImage: "clock", text: eta)
+                if let eta = member.eta {
+                    MetricPill(systemImage: "clock", text: eta)
+                }
             }
         }
         .padding()

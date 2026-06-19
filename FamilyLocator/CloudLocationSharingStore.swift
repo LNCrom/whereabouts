@@ -71,6 +71,18 @@ final class CloudLocationSharingStore: ObservableObject {
 
         let resolvedDisplayName = displayName ?? UIDevice.current.name
         let resolvedDeviceID = deviceID
+
+        #if DEBUG
+        if publishToLocalTestTransport(
+            circleCode: circleCode,
+            deviceID: resolvedDeviceID,
+            displayName: resolvedDisplayName,
+            location: location
+        ) {
+            return
+        }
+        #endif
+
         let recordID = CKRecord.ID(recordName: "location-\(circleCode)-\(deviceID)")
         database.fetch(withRecordID: recordID) { [weak self] existingRecord, _ in
             guard let self else { return }
@@ -102,6 +114,12 @@ final class CloudLocationSharingStore: ObservableObject {
             statusMessage = "No Whereabouts circle yet."
             return
         }
+
+        #if DEBUG
+        if fetchFromLocalTestTransport(circleCode: circleCode) {
+            return
+        }
+        #endif
 
         isFetching = true
 
@@ -175,3 +193,111 @@ final class CloudLocationSharingStore: ObservableObject {
         )
     }
 }
+
+#if DEBUG
+private extension CloudLocationSharingStore {
+    var localTestTransportURL: URL? {
+        guard let path = ProcessInfo.processInfo.environment["WHEREABOUTS_LOCAL_SHARING_FILE"],
+              path.isEmpty == false
+        else {
+            return nil
+        }
+
+        return URL(fileURLWithPath: path)
+    }
+
+    func publishToLocalTestTransport(
+        circleCode: String,
+        deviceID: String,
+        displayName: String,
+        location: CLLocation
+    ) -> Bool {
+        guard let localTestTransportURL else { return false }
+
+        do {
+            var records = try loadLocalTestRecords(from: localTestTransportURL)
+            records.removeAll { $0.circleCode == circleCode && $0.deviceID == deviceID }
+            records.append(
+                LocalSharedLocationRecord(
+                    circleCode: circleCode,
+                    deviceID: deviceID,
+                    displayName: displayName,
+                    latitude: location.coordinate.latitude,
+                    longitude: location.coordinate.longitude,
+                    horizontalAccuracy: location.horizontalAccuracy,
+                    updatedAt: Date()
+                )
+            )
+            try saveLocalTestRecords(records, to: localTestTransportURL)
+            statusMessage = "This device location is shared with your local test circle."
+        } catch {
+            statusMessage = "Could not publish local test location: \(error.localizedDescription)"
+        }
+
+        return true
+    }
+
+    func fetchFromLocalTestTransport(circleCode: String) -> Bool {
+        guard let localTestTransportURL else { return false }
+
+        do {
+            let records = try loadLocalTestRecords(from: localTestTransportURL)
+            remoteMembers = records
+                .filter { $0.circleCode == circleCode && $0.deviceID != deviceID }
+                .map(member(from:))
+            statusMessage = remoteMembers.isEmpty
+                ? "No one has published a local test location yet."
+                : "Loaded \(remoteMembers.count) local test shared location\(remoteMembers.count == 1 ? "" : "s")."
+        } catch {
+            remoteMembers = []
+            statusMessage = "Could not load local test locations: \(error.localizedDescription)"
+        }
+
+        return true
+    }
+
+    func loadLocalTestRecords(from url: URL) throws -> [LocalSharedLocationRecord] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let data = try Data(contentsOf: url)
+        return try JSONDecoder().decode([LocalSharedLocationRecord].self, from: data)
+    }
+
+    func saveLocalTestRecords(_ records: [LocalSharedLocationRecord], to url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let data = try JSONEncoder().encode(records)
+        try data.write(to: url, options: .atomic)
+    }
+
+    func member(from record: LocalSharedLocationRecord) -> FamilyMember {
+        FamilyMember(
+            name: record.displayName,
+            phoneNumber: nil,
+            emailAddress: nil,
+            device: "iPhone",
+            status: .live,
+            place: "Live shared location",
+            address: "\(record.latitude.formatted(.number.precision(.fractionLength(5)))), \(record.longitude.formatted(.number.precision(.fractionLength(5))))",
+            batteryLevel: 0,
+            updatedAt: record.updatedAt.formatted(.relative(presentation: .named)),
+            arrivedAt: record.updatedAt,
+            lastLocationUpdate: record.updatedAt,
+            isLocationShared: true,
+            tint: .green,
+            latitude: record.latitude,
+            longitude: record.longitude,
+            speed: nil,
+            eta: nil
+        )
+    }
+}
+
+private struct LocalSharedLocationRecord: Codable {
+    var circleCode: String
+    var deviceID: String
+    var displayName: String
+    var latitude: Double
+    var longitude: Double
+    var horizontalAccuracy: Double
+    var updatedAt: Date
+}
+#endif

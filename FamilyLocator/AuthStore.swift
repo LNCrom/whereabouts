@@ -12,6 +12,23 @@ final class AuthStore: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         profile = UserProfile.load(from: defaults)
+
+        #if DEBUG
+        if Self.isUITestAuthBypassEnabled {
+            if profile == nil {
+                let environment = ProcessInfo.processInfo.environment
+                let seededProfile = UserProfile(
+                    id: environment["WHEREABOUTS_TEST_USER_ID"] ?? UUID().uuidString,
+                    name: environment["WHEREABOUTS_TEST_USER_NAME"] ?? "Test User",
+                    email: environment["WHEREABOUTS_TEST_USER_EMAIL"] ?? "test@example.com"
+                )
+                seededProfile.save(to: defaults)
+                profile = seededProfile
+            }
+
+            isUnlocked = true
+        }
+        #endif
     }
 
     var isSignedIn: Bool {
@@ -46,11 +63,24 @@ final class AuthStore: ObservableObject {
 
     func lock() {
         guard isSignedIn else { return }
+
+        #if DEBUG
+        guard Self.isUITestAuthBypassEnabled == false else { return }
+        #endif
+
         isUnlocked = false
     }
 
     func unlock() {
         guard isSignedIn else { return }
+
+        #if DEBUG
+        if Self.isUITestAuthBypassEnabled {
+            isUnlocked = true
+            authenticationError = nil
+            return
+        }
+        #endif
 
         let context = LAContext()
         context.localizedCancelTitle = "Cancel"
@@ -77,6 +107,12 @@ final class AuthStore: ObservableObject {
             }
         }
     }
+
+    #if DEBUG
+    private static var isUITestAuthBypassEnabled: Bool {
+        ProcessInfo.processInfo.environment["WHEREABOUTS_UI_TESTING"] == "1"
+    }
+    #endif
 }
 
 struct UserProfile: Equatable {

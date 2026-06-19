@@ -5,8 +5,8 @@ struct ContentView: View {
 
     @StateObject private var locationSharing = LocationSharingStore()
     @StateObject private var cloudSharing = CloudLocationSharingStore()
-    @State private var familyMembers = FamilyFixtures.members
-    @State private var selectedMember = FamilyFixtures.members[0]
+    @State private var familyMembers: [FamilyMember] = []
+    @State private var selectedMember: FamilyMember?
     @State private var selectedTab: AppTab = .map
 
     private var visibleMembers: [FamilyMember] {
@@ -56,9 +56,18 @@ struct ContentView: View {
             guard locationSharing.canShareLocation else { return }
             cloudSharing.publish(location: location, displayName: auth.profile?.displayName)
         }
+        .onReceive(cloudSharing.$remoteMembers) { members in
+            updateSelectionIfNeeded(with: familyMembers + members)
+        }
         .onAppear {
             cloudSharing.fetchSharedLocations()
+            updateSelectionIfNeeded(with: visibleMembers)
         }
+    }
+
+    private func updateSelectionIfNeeded(with members: [FamilyMember]) {
+        guard selectedMember == nil || members.contains(where: { $0.id == selectedMember?.id }) == false else { return }
+        selectedMember = members.first
     }
 }
 

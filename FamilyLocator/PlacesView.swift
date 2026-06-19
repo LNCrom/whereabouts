@@ -5,7 +5,7 @@ import SwiftUI
 
 struct PeopleView: View {
     @Binding var members: [FamilyMember]
-    @Binding var selectedMember: FamilyMember
+    @Binding var selectedMember: FamilyMember?
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     @State private var isContactPickerPresented = false
@@ -35,28 +35,45 @@ struct PeopleView: View {
             }
 
             Section("Family Circle") {
-                ForEach(members) { member in
-                    VStack(spacing: 8) {
+                if members.isEmpty && cloudSharing.remoteMembers.isEmpty {
+                    ContentUnavailableView(
+                        "No people yet",
+                        systemImage: "person.2",
+                        description: Text("Select someone from Contacts to send a Whereabouts invite.")
+                    )
+                } else {
+                    ForEach(cloudSharing.remoteMembers) { member in
                         Button {
                             selectedMember = member
                         } label: {
-                            PersonRow(member: member, isSelected: member.id == selectedMember.id)
+                            PersonRow(member: member, isSelected: member.id == selectedMember?.id)
                         }
                         .buttonStyle(.plain)
+                    }
 
-                        if member.isLocationShared == false {
+                    ForEach(members) { member in
+                        VStack(spacing: 8) {
                             Button {
-                                invite(member)
+                                selectedMember = member
                             } label: {
-                                Label("Send Whereabouts invite", systemImage: "paperplane.fill")
-                                    .frame(maxWidth: .infinity)
+                                PersonRow(member: member, isSelected: member.id == selectedMember?.id)
                             }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
+                            .buttonStyle(.plain)
+
+                            if member.isLocationShared == false {
+                                Button {
+                                    invite(member)
+                                } label: {
+                                    Label("Send Whereabouts invite", systemImage: "paperplane.fill")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
                         }
                     }
+                    .onDelete(perform: removeMembers)
                 }
-                .onDelete(perform: removeMembers)
             }
         }
         .navigationTitle("People")
@@ -136,8 +153,8 @@ struct PeopleView: View {
         let removedIDs = offsets.map { members[$0].id }
         members.remove(atOffsets: offsets)
 
-        if removedIDs.contains(selectedMember.id), let firstMember = members.first {
-            selectedMember = firstMember
+        if let selectedMember, removedIDs.contains(selectedMember.id) {
+            self.selectedMember = members.first ?? cloudSharing.remoteMembers.first
         }
     }
 

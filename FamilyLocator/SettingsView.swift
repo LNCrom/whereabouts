@@ -2,13 +2,29 @@ import SwiftUI
 import UIKit
 
 struct SettingsView: View {
+    @ObservedObject var auth: AuthStore
     @ObservedObject var locationSharing: LocationSharingStore
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
     var body: some View {
         List {
             Section {
-                PrivacyHeader(locationSharing: locationSharing, cloudSharing: cloudSharing)
+                PrivacyHeader(auth: auth, locationSharing: locationSharing, cloudSharing: cloudSharing)
+            }
+
+            Section("Account") {
+                PermissionRow(
+                    title: "Signed in as",
+                    value: auth.profile?.displayName ?? "Unknown",
+                    systemImage: "person.crop.circle.fill",
+                    tint: .blue
+                )
+
+                Button(role: .destructive) {
+                    auth.signOut()
+                } label: {
+                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
             }
 
             Section("Sharing") {
@@ -126,6 +142,7 @@ struct SettingsView: View {
 }
 
 private struct PrivacyHeader: View {
+    @ObservedObject var auth: AuthStore
     @ObservedObject var locationSharing: LocationSharingStore
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
@@ -138,7 +155,7 @@ private struct PrivacyHeader: View {
                 .background(Color.green.opacity(0.14), in: Circle())
 
             VStack(alignment: .leading, spacing: 4) {
-                Text("Family sharing only")
+                Text(auth.profile?.displayName ?? "Family sharing only")
                     .font(.headline)
                 Text(headerMessage)
                     .font(.subheadline)
@@ -187,7 +204,7 @@ private struct PermissionRow: View {
 struct SettingsView_Previews: PreviewProvider {
     static var previews: some View {
         NavigationStack {
-            SettingsView(locationSharing: LocationSharingStore(), cloudSharing: CloudLocationSharingStore())
+            SettingsView(auth: AuthStore(), locationSharing: LocationSharingStore(), cloudSharing: CloudLocationSharingStore())
         }
     }
 }

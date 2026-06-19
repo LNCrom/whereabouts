@@ -1,6 +1,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @ObservedObject var auth: AuthStore
+
     @StateObject private var locationSharing = LocationSharingStore()
     @StateObject private var cloudSharing = CloudLocationSharingStore()
     @State private var familyMembers = FamilyFixtures.members
@@ -39,7 +41,7 @@ struct ContentView: View {
             .tag(AppTab.people)
 
             NavigationStack {
-                SettingsView(locationSharing: locationSharing, cloudSharing: cloudSharing)
+                SettingsView(auth: auth, locationSharing: locationSharing, cloudSharing: cloudSharing)
             }
             .tabItem {
                 Label("Privacy", systemImage: "shield.checkered")
@@ -52,7 +54,7 @@ struct ContentView: View {
         }
         .onReceive(locationSharing.$currentLocation.compactMap { $0 }) { location in
             guard locationSharing.canShareLocation else { return }
-            cloudSharing.publish(location: location)
+            cloudSharing.publish(location: location, displayName: auth.profile?.displayName)
         }
         .onAppear {
             cloudSharing.fetchSharedLocations()
@@ -68,6 +70,6 @@ private enum AppTab {
 
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
-        ContentView()
+        ContentView(auth: AuthStore())
     }
 }

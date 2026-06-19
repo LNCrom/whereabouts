@@ -35,6 +35,8 @@
 	<true/>
 	<key>NSContactsUsageDescription</key>
 	<string>Whereabouts uses Contacts so you can choose family members or friends to invite into your private sharing circle.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Whereabouts uses Face ID to revalidate access to your signed-in family location account.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>Whereabouts uses background location to keep shared family locations current when sharing is enabled.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

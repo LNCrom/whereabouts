@@ -77,7 +77,15 @@ final class CloudLocationSharingStore: ObservableObject {
     }
 
     var hasActiveCircle: Bool {
-        activeScope != nil || localTestTransportURL != nil
+        if activeScope != nil {
+            return true
+        }
+
+        #if DEBUG
+        return localTestTransportURL != nil
+        #else
+        return false
+        #endif
     }
 
     var sharingTitle: String {

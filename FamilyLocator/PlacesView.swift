@@ -1,5 +1,3 @@
-import Contacts
-import ContactsUI
 import CloudKit
 import SwiftUI
 import UIKit
@@ -9,22 +7,11 @@ struct PeopleView: View {
     @Binding var selectedMember: FamilyMember?
     @ObservedObject var cloudSharing: CloudLocationSharingStore
 
-    @State private var isContactPickerPresented = false
-    @State private var preparedCloudShare: PreparedCloudShare?
+    @State private var preparedInvite: PreparedWhereaboutsInvite?
     @State private var inviteErrorMessage: String?
 
     var body: some View {
         List {
-            Section {
-                Button {
-                    isContactPickerPresented = true
-                } label: {
-                    Label("Select from Contacts", systemImage: "person.crop.circle.badge.plus")
-                }
-            } footer: {
-                Text("Whereabouts sharing uses iCloud and requires the other person to open Whereabouts and approve location permission. Apple does not let this app import Find My people locations.")
-            }
-
             Section {
                 Button {
                     prepareCloudInvite()
@@ -40,17 +27,17 @@ struct PeopleView: View {
                 Label("Apple sends and approves the iCloud invite", systemImage: "checkmark.icloud.fill")
                 Label("Approved members publish location into the shared circle", systemImage: "location.fill")
             } header: {
-                Text("Whereabouts sharing")
+                Text("Invite link")
             } footer: {
-                Text(cloudSharing.statusMessage)
+                Text("\(cloudSharing.statusMessage) Send this link only to people you want in your Whereabouts circle.")
             }
 
-            Section("Family Circle") {
-                if members.isEmpty && cloudSharing.remoteMembers.isEmpty {
+            Section("Shared phones") {
+                if cloudSharing.remoteMembers.isEmpty {
                     ContentUnavailableView(
-                        "No people yet",
-                        systemImage: "person.2",
-                        description: Text("Select someone from Contacts to send a Whereabouts invite.")
+                        "No shared phones yet",
+                        systemImage: "iphone.gen3.radiowaves.left.and.right",
+                        description: Text("Send the invite link. After someone opens it in Whereabouts and allows location, they appear here.")
                     )
                 } else {
                     ForEach(cloudSharing.remoteMembers) { member in
@@ -61,58 +48,15 @@ struct PeopleView: View {
                         }
                         .buttonStyle(.plain)
                     }
-
-                    ForEach(members) { member in
-                        VStack(spacing: 8) {
-                            Button {
-                                selectedMember = member
-                            } label: {
-                                PersonRow(member: member, isSelected: member.id == selectedMember?.id)
-                            }
-                            .buttonStyle(.plain)
-
-                            if member.isLocationShared == false {
-                                Button {
-                                    invite(member)
-                                } label: {
-                                    Label(
-                                        cloudSharing.isPreparingShare ? "Preparing invite..." : "Send Whereabouts invite",
-                                        systemImage: cloudSharing.isPreparingShare ? "icloud.and.arrow.up" : "paperplane.fill"
-                                    )
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                                .controlSize(.small)
-                                .disabled(cloudSharing.isPreparingShare)
-                            }
-                        }
-                    }
-                    .onDelete(perform: removeMembers)
                 }
             }
         }
         .navigationTitle("People")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isContactPickerPresented = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("Select family member from Contacts")
-            }
-        }
-        .sheet(isPresented: $isContactPickerPresented) {
-            ContactPicker { contact in
-                addContact(contact)
-            }
-        }
-        .sheet(item: $preparedCloudShare) { preparedShare in
-            CloudSharingController(
-                share: preparedShare.share,
-                container: preparedShare.container,
-                cloudSharing: cloudSharing
-            )
+        .sheet(item: $preparedInvite) { invite in
+            ActivityController(items: [
+                "Join my Whereabouts family circle to share live locations.",
+                invite.url
+            ])
         }
         .alert("Could not prepare invite", isPresented: inviteErrorBinding) {
             Button("OK", role: .cancel) {
@@ -123,67 +67,20 @@ struct PeopleView: View {
         }
     }
 
-    private func addContact(_ contact: CNContact) {
-        let name = CNContactFormatter.string(from: contact, style: .fullName) ?? "New Person"
-        let phoneNumber = contact.phoneNumbers.first?.value.stringValue
-        let emailAddress = contact.emailAddresses.first?.value as String?
-
-        guard members.contains(where: { $0.name == name }) == false else { return }
-
-        let member = FamilyMember(
-            name: name,
-            phoneNumber: phoneNumber,
-            emailAddress: emailAddress,
-            device: "Invite pending",
-            status: .invited,
-            place: "Waiting for shared location",
-            address: "Waiting for shared location",
-            batteryLevel: 0,
-            updatedAt: "Not sharing",
-            arrivedAt: Date(),
-            lastLocationUpdate: Date(),
-            isLocationShared: false,
-            tint: nextTint,
-            latitude: 30.2672,
-            longitude: -97.7431,
-            speed: nil,
-            eta: nil
-        )
-
-        members.append(member)
-        selectedMember = member
-    }
-
-    private func invite(_ member: FamilyMember) {
-        prepareCloudInvite()
-    }
-
     private func prepareCloudInvite() {
         cloudSharing.prepareShare { result in
             switch result {
             case .success(let preparedShare):
-                preparedCloudShare = PreparedCloudShare(
-                    share: preparedShare.share,
-                    container: preparedShare.container
-                )
+                guard let url = preparedShare.share.url else {
+                    inviteErrorMessage = "Whereabouts created the iCloud share, but Apple did not return an invite link. Try again in a moment."
+                    return
+                }
+
+                preparedInvite = PreparedWhereaboutsInvite(url: url)
             case .failure(let error):
                 inviteErrorMessage = error.localizedDescription
             }
         }
-    }
-
-    private func removeMembers(at offsets: IndexSet) {
-        let removedIDs = offsets.map { members[$0].id }
-        members.remove(atOffsets: offsets)
-
-        if let selectedMember, removedIDs.contains(selectedMember.id) {
-            self.selectedMember = members.first ?? cloudSharing.remoteMembers.first
-        }
-    }
-
-    private var nextTint: Color {
-        let colors: [Color] = [.blue, .green, .orange, .purple, .pink, .teal]
-        return colors[members.count % colors.count]
     }
 
     private var inviteErrorBinding: Binding<Bool> {
@@ -197,10 +94,9 @@ struct PeopleView: View {
     }
 }
 
-private struct PreparedCloudShare: Identifiable {
+private struct PreparedWhereaboutsInvite: Identifiable {
     let id = UUID()
-    let share: CKShare
-    let container: CKContainer
+    let url: URL
 }
 
 private struct PersonRow: View {
@@ -245,48 +141,14 @@ private struct PersonRow: View {
     }
 }
 
-private struct ContactPicker: UIViewControllerRepresentable {
-    var onSelect: (CNContact) -> Void
+private struct ActivityController: UIViewControllerRepresentable {
+    var items: [Any]
 
-    func makeUIViewController(context: Context) -> CNContactPickerViewController {
-        let picker = CNContactPickerViewController()
-        picker.delegate = context.coordinator
-        picker.displayedPropertyKeys = [CNContactPhoneNumbersKey, CNContactEmailAddressesKey]
-        return picker
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
 
-    func updateUIViewController(_ uiViewController: CNContactPickerViewController, context: Context) {
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onSelect: onSelect)
-    }
-
-    final class Coordinator: NSObject, CNContactPickerDelegate {
-        var onSelect: (CNContact) -> Void
-
-        init(onSelect: @escaping (CNContact) -> Void) {
-            self.onSelect = onSelect
-        }
-
-        func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) {
-            onSelect(contact)
-        }
-    }
-}
-
-private struct CloudSharingController: UIViewControllerRepresentable {
-    var share: CKShare
-    var container: CKContainer
-    @ObservedObject var cloudSharing: CloudLocationSharingStore
-
-    func makeUIViewController(context: Context) -> UICloudSharingController {
-        let controller = UICloudSharingController(share: share, container: container)
-        cloudSharing.configure(controller)
-        return controller
-    }
-
-    func updateUIViewController(_ uiViewController: UICloudSharingController, context: Context) {
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
     }
 }
 

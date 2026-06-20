@@ -285,24 +285,25 @@ final class CloudLocationSharingStore: ObservableObject {
 
             switch result {
             case .success(let userRecordName):
-                let query = CKQuery(recordType: Constants.locationRecordType, predicate: NSPredicate(value: true))
-
                 var records: [CKRecord] = []
-                let operation = CKQueryOperation(query: query)
-                operation.zoneID = scope.zoneID
-                operation.resultsLimit = 25
-                operation.recordMatchedBlock = { _, result in
-                    if case let .success(record) = result {
-                        records.append(record)
-                    }
+                var zoneFetchError: Error?
+                let operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: [scope.zoneID], optionsByRecordZoneID: nil)
+                operation.fetchAllChanges = true
+                operation.recordChangedBlock = { record in
+                    guard record.recordType == Constants.locationRecordType else { return }
+                    records.append(record)
                 }
-                operation.queryResultBlock = { [weak self] result in
+                operation.recordZoneFetchCompletionBlock = { _, _, _, _, error in
+                    zoneFetchError = error
+                }
+                operation.fetchRecordZoneChangesCompletionBlock = { [weak self] error in
                     Task { @MainActor in
                         guard let self else { return }
                         self.isFetching = false
 
-                        switch result {
-                        case .success:
+                        if let error = error ?? zoneFetchError {
+                            self.statusMessage = "Could not load shared locations: \(error.localizedDescription)"
+                        } else {
                             let visibleRecords = records
                                 .filter { ($0["userRecordName"] as? String) != userRecordName }
                                 .sorted {
@@ -313,8 +314,6 @@ final class CloudLocationSharingStore: ObservableObject {
                             self.statusMessage = self.remoteMembers.isEmpty
                                 ? "No one has accepted and published a Whereabouts location yet."
                                 : "Loaded \(self.remoteMembers.count) shared location\(self.remoteMembers.count == 1 ? "" : "s")."
-                        case .failure(let error):
-                            self.statusMessage = "Could not load shared locations: \(error.localizedDescription)"
                         }
                     }
                 }
@@ -392,7 +391,9 @@ final class CloudLocationSharingStore: ObservableObject {
             guard let self else { return }
 
             if let share = record as? CKShare {
-                completion(.success(share))
+                Task { @MainActor in
+                    self.ensureInviteLinkPermissions(for: share, completion: completion)
+                }
                 return
             }
 
@@ -403,7 +404,7 @@ final class CloudLocationSharingStore: ObservableObject {
 
             let share = CKShare(recordZoneID: zoneID)
             share[CKShare.SystemFieldKey.title] = "Whereabouts Family Circle" as CKRecordValue
-            share.publicPermission = .none
+            share.publicPermission = .readWrite
 
             self.privateDatabase.save(share) { savedRecord, error in
                 if let share = savedRecord as? CKShare {
@@ -411,6 +412,25 @@ final class CloudLocationSharingStore: ObservableObject {
                 } else {
                     completion(.failure(error ?? CKError(.internalError)))
                 }
+            }
+        }
+    }
+
+    private func ensureInviteLinkPermissions(
+        for share: CKShare,
+        completion: @escaping (Result<CKShare, Error>) -> Void
+    ) {
+        guard share.publicPermission != .readWrite else {
+            completion(.success(share))
+            return
+        }
+
+        share.publicPermission = .readWrite
+        privateDatabase.save(share) { savedRecord, error in
+            if let share = savedRecord as? CKShare {
+                completion(.success(share))
+            } else {
+                completion(.failure(error ?? CKError(.internalError)))
             }
         }
     }

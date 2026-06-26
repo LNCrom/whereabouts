@@ -11,6 +11,7 @@ final class CloudLocationSharingStore: ObservableObject {
     @Published private(set) var statusMessage = "Create or accept a Whereabouts invite to start shared locations."
     @Published private(set) var isFetching = false
     @Published private(set) var isPreparingShare = false
+    @Published private(set) var inviteEventID: UUID?
 
     private enum Constants {
         static let containerIdentifier = "iCloud.com.lancecromwell.Whereabouts"
@@ -181,6 +182,13 @@ final class CloudLocationSharingStore: ObservableObject {
     }
 
     func acceptShare(_ metadata: CKShare.Metadata) {
+        if isOwnInvite(metadata) {
+            statusMessage = "This invite is for your own Whereabouts circle. Send it to someone else so they can join and share location."
+            inviteEventID = UUID()
+            fetchSharedLocations()
+            return
+        }
+
         statusMessage = "Accepting Whereabouts share..."
 
         let operation = CKAcceptSharesOperation(shareMetadatas: [metadata])
@@ -197,6 +205,7 @@ final class CloudLocationSharingStore: ObservableObject {
                 self.defaults.set(zoneID.zoneName, forKey: Keys.sharedZoneName)
                 self.defaults.set(zoneID.ownerName, forKey: Keys.sharedZoneOwnerName)
                 self.statusMessage = "Whereabouts share accepted. Turn on location permission to appear in this circle."
+                self.inviteEventID = UUID()
                 self.fetchSharedLocations()
             }
         }
@@ -345,6 +354,17 @@ final class CloudLocationSharingStore: ObservableObject {
 
     private func database(for scope: CircleScope) -> CKDatabase {
         scope.isOwner ? privateDatabase : sharedDatabase
+    }
+
+    private func isOwnInvite(_ metadata: CKShare.Metadata) -> Bool {
+        guard let privateZoneName = defaults.string(forKey: Keys.privateZoneName),
+              privateZoneName.isEmpty == false
+        else {
+            return false
+        }
+
+        let zoneID = metadata.share.recordID.zoneID
+        return zoneID.zoneName == privateZoneName && zoneID.ownerName == CKCurrentUserDefaultName
     }
 
     private func ensureOwnerZone(completion: @escaping (Result<CKRecordZone.ID, Error>) -> Void) {

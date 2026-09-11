@@ -23,7 +23,7 @@ enum MemberStatus: String, CaseIterable, Identifiable {
 }
 
 struct FamilyMember: Identifiable, Hashable {
-    var id = UUID()
+    var id = UUID().uuidString
     var name: String
     var phoneNumber: String?
     var emailAddress: String?
@@ -54,7 +54,7 @@ struct FamilyMember: Identifiable, Hashable {
     var timeAtLocationSummary: String {
         guard isLocationShared else { return "Not sharing yet" }
 
-        let components = Calendar.current.dateComponents([.hour, .minute], from: arrivedAt, to: Date())
+        let components = Calendar.current.dateComponents([.hour, .minute], from: arrivedAt, to: min(Date(), lastLocationUpdate))
         let hours = components.hour ?? 0
         let minutes = components.minute ?? 0
 

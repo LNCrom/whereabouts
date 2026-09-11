@@ -1,74 +1,98 @@
-# Whereabouts Real-World Architecture
+# Whereabouts Architecture
 
-Whereabouts uses Apple-native consent and storage primitives for the production family-location flow.
+Updated September 11, 2026. This describes the implementation in build 1.0 (10), not a claim of physical-device validation.
 
-## What Works
+## Decision
 
-- Each user signs in locally to Whereabouts and revalidates access with device authentication.
-- The circle owner creates a private CloudKit custom zone named `WhereaboutsFamilyCircle`.
-- The owner shares that whole zone with `CKShare(recordZoneID:)`, using Apple's native `UICloudSharingController`.
-- Invited people must install/open Whereabouts, accept the iCloud share, and grant iOS location permission before their phone publishes location.
-- Each approved participant writes one `WhereaboutsLocation` record in the shared zone.
-- Other approved participants read the shared zone and render live map markers plus:
-  - Address
-  - Time at location
-  - Time arrived at location
+Use Core Location, CloudKit private/shared databases, private CloudKit invitations, and CloudKit push subscriptions. CloudKit is the backend. A separate hosting account is unnecessary for this personal, Apple-only, trusted-family circle. The app requires installation and explicit sharing consent on every phone. It cannot import Find My people locations.
 
-## Why This Architecture
+A custom backend would be warranted for Android support, administrative audit trails, or strict per-member write ownership. It would still not bypass iOS background-execution limits.
 
-Apple does not provide a public API for third-party apps to read Find My people locations. The free native solution Apple does allow is:
+## Identity and Service Lifetime
 
-- Core Location for each member's own device location.
-- CloudKit private/shared databases for consented data sharing.
-- CloudKit Sharing for Apple-managed invitations, participant approval, and access control.
+- CloudKit verifies the iCloud account on the phone. A chosen display name is a label, not proof of identity.
+- Legacy local profiles bind to the verified iCloud identity without unlocking the screen.
+- Face ID/device passcode protects viewing the map. Screen locking does not revoke previously enabled background sharing.
+- SharingRuntime owns authentication, location, network recovery, and cloud synchronization for the process lifetime. SwiftUI views observe these services.
+- An iCloud account change suspends uploads, clears visible locations, and signs out the local profile.
 
-Zone-wide CloudKit Sharing is used instead of a single shared root record because location records are continuously created and updated by multiple participants. Sharing the zone makes every approved participant's current location record part of the same consented circle.
+## Invitations and Membership
 
-## CloudKit Container
+- One active circle per installation. A joined shared zone takes precedence over an accidentally created owner zone during migration.
+- Owner writes use the private database. Joined members use the shared database, with the owner's actual zone ID.
+- The owner prepares a saved CKShare before showing UICloudSharingController. This avoids the former empty preparation sheet.
+- Invitations use private access to selected Apple accounts, not public read/write bearer links. Owners can manage participants in Apple's sharing sheet.
+- AppDelegate and UIWindowSceneDelegate receive invitations. Cold-launch metadata and invitations received before sign-in are retained until the app is unlocked.
+- Accepting an invite checks the result for that specific share. Own invitations and repeated acceptance do not create additional circles.
+- Membership is displayed separately from location publication. A joined person can have no location because sharing or permission is off.
+- Leaving a joined circle deletes its zone from the shared database, removing the participant's access. Deleting an owned zone removes the circle for everyone.
+- Existing older public links become private when the owner opens invitation management in this build. Existing participants remain collaborators. The owner must issue private invitations for new members.
 
-The app expects this container:
+## Location Publication
 
-```text
-iCloud.com.lancecromwell.Whereabouts
-```
+- New installations start with sharing off.
+- Collection requires a signed-in profile matching the verified iCloud account, circle membership, sharing enabled, and iOS authorization.
+- Always authorization enables background updates, significant-change monitoring, and visit monitoring. The app restarts these services after launch once identity is validated.
+- Approximate sharing rounds coordinates before any upload and suppresses street-level reverse geocoding.
+- Only the newest unsent fix is retained. Sample timestamps, rather than upload times, indicate freshness.
+- Uploads normally occur after 50 meters of movement or 60 seconds since the last successful upload. This is a throttle, not a promised delivery interval.
+- Arrival estimates use a fixed local anchor. Slowly moving away from a location does not indefinitely preserve the original arrival time.
+- A gap longer than ten minutes resets the arrival estimate. Time at location ends at the last observation; the UI does not invent continued presence.
 
-The Apple Developer App ID for `com.lancecromwell.Whereabouts` must enable:
+## Delivery and Recovery
 
-- iCloud
-- CloudKit
-- Container `iCloud.com.lancecromwell.Whereabouts`
-- Background location capability
+- SharingPersistence stores the active circle, account binding, pending invitation, arrival estimate, latest unsent fix, and removal queue.
+- The file uses iOS data protection and is excluded from backups.
+- A single upload worker serializes writes. It refetches the record before saving, preserves the sample timestamp, and retries transient errors with backoff and Apple's retry hints.
+- Stale queued samples older than five minutes are discarded. A fresh fix is requested on reconnect.
+- Pausing clears queued uploads and durably queues removal. A save already in flight is followed by removal if consent ended during that save.
+- Every queued fix carries its sharing deadline. Retries recheck that deadline before saving and remove a write that completes after expiration.
+- A temporary background execution allowance gives an upload a chance to finish. It does not guarantee runtime or delivery.
+- Private and shared database subscriptions trigger refreshes through APNs. Push notifications are hints, not the only source of synchronization.
+- Foreground refresh every 15 seconds and network-restoration refresh cover coalesced or missing pushes.
+- Zone reads process all pages and deletions before replacing the visible snapshot. Stable record IDs preserve map selection.
+- Locations older than three minutes are marked last known. Missing battery information is not displayed as a fabricated 0%.
 
-## CloudKit Schema
+## Production Configuration
 
-The app will create development records as it runs. Before App Store production use, deploy the CloudKit development schema to production in CloudKit Console.
+- Bundle ID: com.lancecromwell.Whereabouts
+- Team: 92QY292282
+- CloudKit container: iCloud.com.lancecromwell.Whereabouts
+- Record type: WhereaboutsLocation
+- Fields: userRecordName, displayName, latitude, longitude, horizontalAccuracy, address, arrivedAt, updatedAt
+- Apple-managed share record type: cloudkit.share
+- Required entitlements: CloudKit container/services and APNs
+- Required background modes: location, remote-notification, fetch
+- CKSharingSupported must remain true.
+- TestFlight uses the Production CloudKit environment. Both record types must exist there.
+- Production signing profile: Whereabouts App Store Push 20260911
+- No new server record fields are introduced in this build.
 
-Record type: `WhereaboutsLocation`
+## Trust and Operating Limits
 
-Fields:
+Zone-wide read/write sharing treats invited members as trusted collaborators. It does not enforce that only a record's named user may modify that record. Do not describe this as a tamper-proof location service.
 
-- `userRecordName`: String
-- `displayName`: String
-- `latitude`: Double
-- `longitude`: Double
-- `horizontalAccuracy`: Double
-- `address`: String
-- `arrivedAt`: Date/Time
-- `updatedAt`: Date/Time
+No iOS application can guarantee continuous updates when the phone is offline, powered off, has revoked permission, or the user has force-quit it. Silent pushes may be delayed. Pausing is immediate locally, but deletion of the prior cloud record can only happen after connectivity returns. Timed sharing is enforced when the process runs; offline receivers retain the last known observation until the cloud deletion arrives.
 
-System share records are managed by CloudKit as `cloudkit.share`.
+## Verification
 
-## Runtime Behavior
+The test target injects LocationCloudTransport rather than bypassing production synchronization through a shared local JSON file. Two test personas exercise the actual outbox and record-mapping code against an in-memory transport. Tests cover circle routing, identity changes, offline replay, in-flight pause, freshness, approximate coordinates, arrival anchoring, and service lifetime across locking.
 
-- The app publishes the current device location when sharing is enabled and permission allows it.
-- Location writes are throttled: first publish, then meaningful movement or a one-minute refresh interval.
-- Address is resolved with reverse geocoding; if geocoding is unavailable, coordinates are stored.
-- Arrival time is preserved while the device remains within 100 meters of the previous stored location.
-- The foreground app refreshes shared locations every 15 seconds and after successful location publishes.
+Simulator tests do not prove Apple's account authorization, invitation delivery, production schema, APNs delivery, or physical-device background scheduling.
 
-## Limits
+Before calling the family deployment verified, use two physical iPhones with separate Apple accounts and the same build:
 
-- Whereabouts cannot read Find My data.
-- A family member cannot share location without installing/opening Whereabouts and approving iOS location permission.
-- Real iCloud share acceptance must be tested on physical devices signed into separate iCloud accounts; generic simulators cannot fully exercise Apple iCloud sharing.
-- App Store privacy labels must disclose location data collection and iCloud-backed sharing.
+1. Owner invites the recipient's iCloud account. Confirm the real invitation is delivered.
+2. Recipient opens it from terminated, locked, and already-open app states. Confirm joined membership.
+3. Enable sharing and Always location on both phones. Confirm each phone sees the other and sees successful Last sent.
+4. Lock both phones and move one between two known locations. Compare real fixes and arrival estimates.
+5. Interrupt network, reconnect, pause while offline, then reconnect again. Confirm recovery and removal.
+6. Revoke a participant, reopen the app, and verify former access is gone.
+7. Verify a force-quit or offline phone appears as last known rather than live.
+
+## Apple References
+
+- [Accepting share invitations in SwiftUI](https://developer.apple.com/documentation/coredata/accepting-share-invitations-in-a-swiftui-app)
+- [Apple zone-sharing sample](https://github.com/apple/sample-cloudkit-zonesharing)
+- [CloudKit database subscriptions](https://developer.apple.com/documentation/cloudkit/ckdatabasesubscription)
+- [Background location updates](https://developer.apple.com/documentation/corelocation/handling-location-updates-in-the-background)

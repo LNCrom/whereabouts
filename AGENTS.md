@@ -19,4 +19,6 @@
 
 - Prefer SwiftUI-native state and small focused views.
 - Keep privacy, consent, and member-controlled sharing central to feature decisions.
-- The current app is mock-data backed; real location sharing still needs Core Location, identity/invites, a backend, push notifications, and geofence persistence.
+- Runtime sharing uses Core Location and CloudKit private/shared databases. SharingRuntime owns services for the process lifetime; views must not own or drive background uploads.
+- Keep CloudKit network access behind LocationCloudTransport. Unit tests inject a fake transport and do not prove real iCloud invitations or physical-device background delivery.
+- Run simulator tests with normal Xcode signing. Disabling signing removes the CloudKit entitlements and can crash the test host at startup.

@@ -185,11 +185,13 @@ private struct SelectedMemberCard: View {
 
             DetailRow(title: "Address", value: member.address, systemImage: "mappin.and.ellipse")
             DetailRow(title: "Time at location", value: member.timeAtLocationSummary, systemImage: "timer")
-            DetailRow(title: "Time arrived at location", value: member.arrivedAtSummary, systemImage: "arrow.down.circle.fill")
+            DetailRow(title: "Estimated arrival", value: member.arrivedAtSummary, systemImage: "arrow.down.circle.fill")
 
             LazyVGrid(columns: metricColumns, alignment: .leading, spacing: 10) {
                 MetricPill(systemImage: "iphone", text: member.device)
-                MetricPill(systemImage: "battery.75percent", text: "\(member.batteryLevel)%")
+                if member.batteryLevel >= 0 {
+                    MetricPill(systemImage: "battery.75percent", text: "\(member.batteryLevel)%")
+                }
                 MetricPill(systemImage: "clock.arrow.circlepath", text: member.updatedAt)
 
                 if let speed = member.speed {

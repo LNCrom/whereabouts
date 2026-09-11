@@ -43,8 +43,6 @@
 	<string>Whereabouts uses background location to keep shared family locations current when sharing is enabled.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Whereabouts uses your location to share your device position with invited family members.</string>
-	<key>NSMotionUsageDescription</key>
-	<string>Whereabouts uses motion activity to detect trips and driving alerts when you enable drive detection.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -55,6 +53,8 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
+		<string>remote-notification</string>
+		<string>fetch</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

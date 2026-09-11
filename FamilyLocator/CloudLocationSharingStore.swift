@@ -5,697 +5,514 @@ import UIKit
 
 @MainActor
 final class CloudLocationSharingStore: ObservableObject {
-    static let acceptedShareMetadataNotification = Notification.Name("WhereaboutsAcceptedCloudKitShare")
-
     @Published private(set) var remoteMembers: [FamilyMember] = []
-    @Published private(set) var statusMessage = "Create or accept a Whereabouts invite to start shared locations."
+    @Published private(set) var statusMessage = "Connect to iCloud to start sharing."
     @Published private(set) var isFetching = false
     @Published private(set) var isPreparingShare = false
     @Published private(set) var inviteEventID: UUID?
+    @Published private(set) var accountID: String?
+    @Published private(set) var accountChangedID: UUID?
+    @Published private(set) var circleRevision = 0
+    @Published private(set) var invitationMessage: String?
+    @Published private(set) var participants: [CircleParticipant] = []
+    @Published private(set) var lastPublishedAt: Date?
+    @Published private(set) var pushStatus = "Waiting for iCloud"
 
-    private enum Constants {
-        static let containerIdentifier = "iCloud.com.lancecromwell.Whereabouts"
-        static let zoneName = "WhereaboutsFamilyCircle"
-        static let locationRecordType = "WhereaboutsLocation"
-    }
+    private let transport: any LocationCloudTransport
+    private let persistence: SharingPersistence
+    private var state: SharingState
+    private var publishingAllowed = false
+    private var publishingExpiresAt: Date?
+    private var syncTask: Task<Void, Never>?
+    private var inviteTask: Task<Void, Never>?
+    private var lastPublishedLocation: CLLocation?
+    private var retryAttempt = 0
+    private var retryTask: Task<Void, Never>?
+    private var sessionGeneration = UUID()
+    private var pendingMetadata: CKShare.Metadata?
+    private var storageError: Error?
+    private var verifiedAt: Date?
+    private var subscribedAccount: String?
+    private let addressResolver: (CLLocation) async -> String
 
-    private enum Keys {
-        static let privateZoneName = "whereabouts.cloud.privateZoneName"
-        static let sharedZoneName = "whereabouts.cloud.sharedZoneName"
-        static let sharedZoneOwnerName = "whereabouts.cloud.sharedZoneOwnerName"
-        static let currentUserRecordName = "whereabouts.cloud.currentUserRecordName"
-    }
-
-    private enum CircleScope {
-        case owner(CKRecordZone.ID)
-        case participant(CKRecordZone.ID)
-
-        var zoneID: CKRecordZone.ID {
-            switch self {
-            case .owner(let zoneID), .participant(let zoneID):
-                return zoneID
+    init(defaults: UserDefaults = .standard, transport: (any LocationCloudTransport)? = nil,
+         persistence: SharingPersistence = .standard, addressResolver: ((CLLocation) async -> String)? = nil) {
+        self.transport = transport ?? CloudKitTransport()
+        self.persistence = persistence
+        self.addressResolver = addressResolver ?? Self.resolveAddress
+        do { state = try persistence.load() }
+        catch { state = SharingState(); storageError = error }
+        // Migrate existing installs without creating a second family circle.
+        if state.scope == nil {
+            if let name = defaults.string(forKey: "whereabouts.cloud.sharedZoneName"),
+               let owner = defaults.string(forKey: "whereabouts.cloud.sharedZoneOwnerName") {
+                state.scope = CircleScope(zoneName: name, ownerName: owner, isOwner: false)
+            } else if let name = defaults.string(forKey: "whereabouts.cloud.privateZoneName") {
+                state.scope = CircleScope(zoneName: name, ownerName: CKCurrentUserDefaultName, isOwner: true)
+            }
+            if state.accountID == nil { state.accountID = defaults.string(forKey: "whereabouts.cloud.currentUserRecordName") }
+            if storageError == nil, (try? persistence.save(state)) != nil {
+                for key in ["privateZoneName", "sharedZoneName", "sharedZoneOwnerName", "currentUserRecordName"] {
+                    defaults.removeObject(forKey: "whereabouts.cloud." + key)
+                }
             }
         }
+    }
 
-        var isOwner: Bool {
-            if case .owner = self { return true }
+    var hasActiveCircle: Bool { state.scope != nil }
+    var isCircleOwner: Bool { state.scope?.isOwner == true }
+    var sharingTitle: String { isCircleOwner ? "Invite or manage family" : "Create family circle" }
+    var hasPendingInvite: Bool { state.pendingInvite != nil || pendingMetadata != nil }
+    var hasPendingUpload: Bool { state.pendingLocation != nil }
+
+    func updateAccountStatus() { Task { _ = await refresh() } }
+
+    @discardableResult
+    func verifyAccount(force: Bool = false) async throws -> String {
+        if !force, let accountID, let verifiedAt, Date().timeIntervalSince(verifiedAt) < 60 { return accountID }
+        let generation = sessionGeneration
+        let id = try await transport.accountID()
+        guard generation == sessionGeneration else { throw CancellationError() }
+        if let previous = state.accountID, previous != id {
+            state = SharingState()
+            publishingAllowed = false
+            remoteMembers = []
+            participants = []
+            lastPublishedAt = nil
+            lastPublishedLocation = nil
+            accountChangedID = UUID()
+            circleRevision += 1
+        }
+        state.accountID = id
+        accountID = id
+        verifiedAt = Date()
+        try persist()
+        return id
+    }
+
+    func accountDidChange() {
+        sessionGeneration = UUID()
+        verifiedAt = nil
+        accountID = nil
+        publishingAllowed = false
+        remoteMembers = []
+        participants = []
+        subscribedAccount = nil
+        retryTask?.cancel()
+        accountChangedID = UUID()
+        updateAccountStatus()
+    }
+
+    func setPublishingAllowed(_ allowed: Bool, discardPending: Bool = true, expiresAt: Date? = nil) {
+        publishingAllowed = allowed
+        publishingExpiresAt = expiresAt
+        if !allowed, discardPending, state.pendingLocation != nil {
+            state.pendingLocation = nil
+            saveOrReport()
+        }
+    }
+
+    func publish(location: CLLocation, displayName: String? = nil) {
+        let sample = LocationSample(location)
+        guard publishingAllowed, sample.isUsable(at: Date()), let scope = state.scope,
+              let accountID, accountID == state.accountID else { return }
+        if let lastPublishedLocation, let lastPublishedAt,
+           location.distance(from: lastPublishedLocation) < 50,
+           Date().timeIntervalSince(lastPublishedAt) < 60 { return }
+        if state.arrival == nil { state.arrival = ArrivalState(anchor: sample, arrivedAt: sample.timestamp) }
+        else { state.arrival?.observe(sample) }
+        state.pendingLocation = PendingLocation(scope: scope, accountID: accountID,
+            displayName: displayName ?? "Family member", sample: sample, arrivedAt: state.arrival!.arrivedAt,
+            expiresAt: publishingExpiresAt)
+        guard saveOrReport() else { return }
+        startSync()
+    }
+
+    func fetchSharedLocations() { Task { _ = await refresh() } }
+
+    @discardableResult
+    func refresh() async -> Bool {
+        updateFreshness()
+        guard !isFetching else { return false }
+        isFetching = true
+        defer { isFetching = false }
+        do {
+            let id = try await verifyAccount()
+            if subscribedAccount != id {
+                do {
+                    try await transport.subscribe(shared: false)
+                    try await transport.subscribe(shared: true)
+                    subscribedAccount = id
+                    pushStatus = "Connected"
+                } catch { pushStatus = "Unavailable; refresh remains active" }
+            }
+            try await restoreCircleIfNeeded()
+            guard let scope = state.scope else {
+                statusMessage = "iCloud connected. Create a circle or open your invitation."
+                return false
+            }
+            let records = try await transport.records(in: scope)
+            guard state.scope == scope, accountID == id else { return false }
+            remoteMembers = records.filter { $0.recordType == "WhereaboutsLocation" && ($0["userRecordName"] as? String) != id }
+                .compactMap(Self.member).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            await refreshParticipants(in: scope)
+            statusMessage = state.pendingLocation == nil ? "Family locations updated." : "Location waiting to sync."
+            startSync()
+            return true
+        } catch {
+            handle(error)
             return false
         }
     }
 
-    private let container = CKContainer(identifier: Constants.containerIdentifier)
-    private let privateDatabase: CKDatabase
-    private let sharedDatabase: CKDatabase
-    private let defaults: UserDefaults
-
-    private var shareObserver: NSObjectProtocol?
-    private var lastPublishedLocation: CLLocation?
-    private var lastPublishedAt: Date?
-
-    init(defaults: UserDefaults = .standard) {
-        self.defaults = defaults
-        privateDatabase = container.privateCloudDatabase
-        sharedDatabase = container.sharedCloudDatabase
-
-        shareObserver = NotificationCenter.default.addObserver(
-            forName: Self.acceptedShareMetadataNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let metadata = notification.object as? CKShare.Metadata else { return }
-            Task { @MainActor in
-                self?.acceptShare(metadata)
-            }
-        }
-
-        if let pendingMetadata = AppDelegate.consumePendingShareMetadata() {
-            acceptShare(pendingMetadata)
-        }
-
-        updateAccountStatus()
-    }
-
-    deinit {
-        if let shareObserver {
-            NotificationCenter.default.removeObserver(shareObserver)
-        }
-    }
-
-    var hasActiveCircle: Bool {
-        if activeScope != nil {
-            return true
-        }
-
-        #if DEBUG
-        return localTestTransportURL != nil
-        #else
-        return false
-        #endif
-    }
-
-    var sharingTitle: String {
-        activeScope?.isOwner == true ? "Manage Whereabouts sharing" : "Create Whereabouts sharing"
-    }
-
-    func updateAccountStatus() {
-        container.accountStatus { [weak self] status, error in
-            Task { @MainActor in
-                guard let self else { return }
-
-                if let error {
-                    self.statusMessage = "Could not check iCloud account: \(error.localizedDescription)"
-                    return
-                }
-
-                switch status {
-                case .available:
-                    self.statusMessage = self.activeScope == nil
-                        ? "iCloud is ready. Create or accept a Whereabouts share."
-                        : "iCloud sharing is ready."
-                    self.cacheCurrentUserRecordID()
-                case .noAccount:
-                    self.statusMessage = "Sign in to iCloud on this iPhone to use Whereabouts sharing."
-                case .restricted:
-                    self.statusMessage = "iCloud is restricted on this iPhone."
-                case .couldNotDetermine:
-                    self.statusMessage = "Whereabouts could not determine iCloud account status."
-                case .temporarilyUnavailable:
-                    self.statusMessage = "iCloud is temporarily unavailable. Try again soon."
-                @unknown default:
-                    self.statusMessage = "Whereabouts could not determine iCloud account status."
-                }
-            }
-        }
-    }
-
-    func configure(_ controller: UICloudSharingController) {
-        controller.delegate = CloudSharingDelegate.shared
-        controller.availablePermissions = [.allowPrivate, .allowReadWrite]
-        controller.modalPresentationStyle = .formSheet
-    }
-
-    func prepareShare(
-        _ controller: UICloudSharingController,
-        completion: @escaping (CKShare?, CKContainer?, Error?) -> Void
-    ) {
-        prepareShare { result in
-            switch result {
-            case .success(let preparedShare):
-                completion(preparedShare.share, preparedShare.container, nil)
-            case .failure(let error):
-                completion(nil, self.container, error)
+    private func restoreCircleIfNeeded() async throws {
+        guard state.scope == nil, state.restoreAllowed != false else { return }
+        let shared = try await transport.zones(shared: true).filter { $0.zoneID.zoneName == "WhereaboutsFamilyCircle" }
+        if shared.count == 1, let zone = shared.first {
+            activate(CircleScope(zoneName: zone.zoneID.zoneName, ownerName: zone.zoneID.ownerName, isOwner: false))
+        } else if shared.count > 1 {
+            invitationMessage = "Several family circles were found. Open the invitation for the circle you want."
+        } else {
+            let owned = try await transport.zones(shared: false)
+            if let zone = owned.first(where: { $0.zoneID.zoneName == "WhereaboutsFamilyCircle" }) {
+                activate(CircleScope(zoneName: zone.zoneID.zoneName, ownerName: zone.zoneID.ownerName, isOwner: true))
             }
         }
     }
 
     func prepareShare(completion: @escaping (Result<(share: CKShare, container: CKContainer), Error>) -> Void) {
+        guard !isPreparingShare else { return }
+        guard !(hasActiveCircle && !isCircleOwner) else {
+            completion(.failure(SharingError.alreadyJoined)); return
+        }
         isPreparingShare = true
-        statusMessage = "Preparing secure iCloud share..."
-
-        ensureOwnerZone { [weak self] result in
-            guard let self else { return }
-
-            switch result {
-            case .success(let zoneID):
-                self.fetchOrCreateZoneShare(in: zoneID) { result in
-                    Task { @MainActor in
-                        self.isPreparingShare = false
-
-                        switch result {
-                        case .success(let share):
-                            self.statusMessage = "Secure iCloud invite ready."
-                            completion(.success((share, self.container)))
-                        case .failure(let error):
-                            self.statusMessage = "Could not create iCloud share: \(error.localizedDescription)"
-                            completion(.failure(error))
-                        }
-                    }
+        Task {
+            defer { isPreparingShare = false }
+            do {
+                _ = try await verifyAccount(force: true)
+                try await restoreCircleIfNeeded()
+                guard !(hasActiveCircle && !isCircleOwner) else { throw SharingError.alreadyJoined }
+                let scope = state.scope ?? CircleScope(zoneName: "WhereaboutsFamilyCircle", ownerName: CKCurrentUserDefaultName, isOwner: true)
+                try await transport.createZone(scope)
+                let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: scope.zoneID)
+                let share: CKShare
+                do {
+                    guard let existing = try await transport.record(id, in: scope) as? CKShare else { throw CKError(.internalError) }
+                    share = existing
+                } catch let error as CKError where error.code == .unknownItem {
+                    share = CKShare(recordZoneID: scope.zoneID)
+                    share[CKShare.SystemFieldKey.title] = "Whereabouts Family Circle" as CKRecordValue
                 }
-            case .failure(let error):
-                Task { @MainActor in
-                    self.isPreparingShare = false
-                    self.statusMessage = "Could not prepare iCloud share: \(error.localizedDescription)"
-                    completion(.failure(error))
-                }
-            }
+                share.publicPermission = .none
+                guard let saved = try await transport.save(share, in: scope) as? CKShare else { throw CKError(.internalError) }
+                activate(scope)
+                invitationMessage = nil
+                statusMessage = "Choose who to invite."
+                completion(.success((saved, (transport as? CloudKitTransport)?.container ?? CKContainer(identifier: CloudKitTransport.containerID))))
+            } catch { handle(error); completion(.failure(error)) }
         }
     }
 
-    func acceptShare(_ metadata: CKShare.Metadata) {
-        if isOwnInvite(metadata) {
-            statusMessage = "This invite is for your own Whereabouts circle. Send it to someone else so they can join and share location."
-            inviteEventID = UUID()
-            fetchSharedLocations()
-            return
+    func receiveInvite(_ metadata: CKShare.Metadata) {
+        guard metadata.containerIdentifier == CloudKitTransport.containerID else {
+            invitationMessage = "This invitation belongs to another app."; return
         }
-
-        statusMessage = "Accepting Whereabouts share..."
-
-        let operation = CKAcceptSharesOperation(shareMetadatas: [metadata])
-        operation.acceptSharesResultBlock = { [weak self] result in
-            Task { @MainActor in
-                guard let self else { return }
-
-                if case .failure(let error) = result {
-                    self.statusMessage = "Could not accept Whereabouts share: \(error.localizedDescription)"
-                    return
-                }
-
-                let zoneID = metadata.share.recordID.zoneID
-                self.defaults.set(zoneID.zoneName, forKey: Keys.sharedZoneName)
-                self.defaults.set(zoneID.ownerName, forKey: Keys.sharedZoneOwnerName)
-                self.statusMessage = "Whereabouts share accepted. Turn on location permission to appear in this circle."
-                self.inviteEventID = UUID()
-                self.fetchSharedLocations()
-            }
-        }
-
-        container.add(operation)
+        pendingMetadata = metadata
+        state.pendingInvite = metadata.share.url
+        invitationMessage = "Invitation received. Unlock Whereabouts to join."
+        saveOrReport()
+        inviteEventID = UUID()
     }
 
-    func publish(location: CLLocation, displayName: String? = nil) {
-        guard shouldPublish(location) else { return }
-
-        #if DEBUG
-        if publishToLocalTestTransport(
-            circleCode: "local-test-circle",
-            deviceID: currentDeviceRecordNameFallback,
-            displayName: displayName ?? UIDevice.current.name,
-            location: location
-        ) {
-            return
-        }
-        #endif
-
-        guard let scope = activeScope else {
-            statusMessage = "Create or accept a Whereabouts share before publishing location."
-            return
-        }
-
-        resolveCurrentUserRecordName { [weak self] result in
-            guard let self else { return }
-
-            switch result {
-            case .success(let userRecordName):
-                let database = self.database(for: scope)
-                let recordID = CKRecord.ID(recordName: "location-\(userRecordName)", zoneID: scope.zoneID)
-                database.fetch(withRecordID: recordID) { existingRecord, _ in
-                    let record = existingRecord ?? CKRecord(recordType: Constants.locationRecordType, recordID: recordID)
-                    let arrivedAt = Self.arrivalDate(for: location, existingRecord: existingRecord)
-
-                    Self.resolveAddress(for: location) { address in
-                        record["userRecordName"] = userRecordName as CKRecordValue
-                        record["displayName"] = (displayName ?? UIDevice.current.name) as CKRecordValue
-                        record["latitude"] = location.coordinate.latitude as CKRecordValue
-                        record["longitude"] = location.coordinate.longitude as CKRecordValue
-                        record["horizontalAccuracy"] = location.horizontalAccuracy as CKRecordValue
-                        record["address"] = address as CKRecordValue
-                        record["arrivedAt"] = arrivedAt as CKRecordValue
-                        record["updatedAt"] = Date() as CKRecordValue
-
-                        database.save(record) { _, error in
-                            Task { @MainActor in
-                                if let error {
-                                    self.statusMessage = "Could not publish this device location: \(error.localizedDescription)"
-                                } else {
-                                    self.markPublished(location)
-                                    self.statusMessage = "This device location is shared with your Whereabouts circle."
-                                    self.fetchSharedLocations()
-                                }
-                            }
-                        }
-                    }
-                }
-            case .failure(let error):
-                Task { @MainActor in
-                    self.statusMessage = "Could not identify iCloud user: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
-
-    func fetchSharedLocations() {
-        #if DEBUG
-        if fetchFromLocalTestTransport(circleCode: "local-test-circle") {
-            return
-        }
-        #endif
-
-        guard let scope = activeScope else {
-            remoteMembers = []
-            statusMessage = "No Whereabouts share yet."
-            return
-        }
-
-        isFetching = true
-
-        resolveCurrentUserRecordName { [weak self] result in
-            guard let self else { return }
-
-            switch result {
-            case .success(let userRecordName):
-                var records: [CKRecord] = []
-                var zoneFetchError: Error?
-                let operation = CKFetchRecordZoneChangesOperation(recordZoneIDs: [scope.zoneID], optionsByRecordZoneID: nil)
-                operation.fetchAllChanges = true
-                operation.recordChangedBlock = { record in
-                    guard record.recordType == Constants.locationRecordType else { return }
-                    records.append(record)
-                }
-                operation.recordZoneFetchCompletionBlock = { _, _, _, _, error in
-                    zoneFetchError = error
-                }
-                operation.fetchRecordZoneChangesCompletionBlock = { [weak self] error in
-                    Task { @MainActor in
-                        guard let self else { return }
-                        self.isFetching = false
-
-                        if let error = error ?? zoneFetchError {
-                            self.statusMessage = "Could not load shared locations: \(error.localizedDescription)"
-                        } else {
-                            let visibleRecords = records
-                                .filter { ($0["userRecordName"] as? String) != userRecordName }
-                                .sorted {
-                                    (($0["updatedAt"] as? Date) ?? .distantPast) >
-                                        (($1["updatedAt"] as? Date) ?? .distantPast)
-                                }
-                            self.remoteMembers = visibleRecords.compactMap(self.member(from:))
-                            self.statusMessage = self.remoteMembers.isEmpty
-                                ? "No one has accepted and published a Whereabouts location yet."
-                                : "Loaded \(self.remoteMembers.count) shared location\(self.remoteMembers.count == 1 ? "" : "s")."
-                        }
-                    }
-                }
-
-                self.database(for: scope).add(operation)
-            case .failure(let error):
-                Task { @MainActor in
-                    self.isFetching = false
-                    self.statusMessage = "Could not identify iCloud user: \(error.localizedDescription)"
-                }
-            }
-        }
-    }
-
-    private var activeScope: CircleScope? {
-        if let privateZoneName = defaults.string(forKey: Keys.privateZoneName), privateZoneName.isEmpty == false {
-            return .owner(CKRecordZone.ID(zoneName: privateZoneName, ownerName: CKCurrentUserDefaultName))
-        }
-
-        if let sharedZoneName = defaults.string(forKey: Keys.sharedZoneName),
-           let ownerName = defaults.string(forKey: Keys.sharedZoneOwnerName),
-           sharedZoneName.isEmpty == false,
-           ownerName.isEmpty == false {
-            return .participant(CKRecordZone.ID(zoneName: sharedZoneName, ownerName: ownerName))
-        }
-
-        return nil
-    }
-
-    private func database(for scope: CircleScope) -> CKDatabase {
-        scope.isOwner ? privateDatabase : sharedDatabase
-    }
-
-    private func isOwnInvite(_ metadata: CKShare.Metadata) -> Bool {
-        guard let privateZoneName = defaults.string(forKey: Keys.privateZoneName),
-              privateZoneName.isEmpty == false
-        else {
-            return false
-        }
-
-        let zoneID = metadata.share.recordID.zoneID
-        return zoneID.zoneName == privateZoneName && zoneID.ownerName == CKCurrentUserDefaultName
-    }
-
-    private func ensureOwnerZone(completion: @escaping (Result<CKRecordZone.ID, Error>) -> Void) {
-        let zoneID = CKRecordZone.ID(zoneName: Constants.zoneName, ownerName: CKCurrentUserDefaultName)
-        privateDatabase.fetch(withRecordZoneID: zoneID) { [weak self] zone, error in
-            guard let self else { return }
-
-            if zone != nil {
-                Task { @MainActor in
-                    self.defaults.set(zoneID.zoneName, forKey: Keys.privateZoneName)
-                    completion(.success(zoneID))
-                }
-                return
-            }
-
-            if let ckError = error as? CKError, ckError.code != .zoneNotFound, ckError.code != .unknownItem {
-                completion(.failure(ckError))
-                return
-            }
-
-            let zone = CKRecordZone(zoneID: zoneID)
-            self.privateDatabase.save(zone) { [weak self] _, error in
-                guard let self else { return }
-
-                if let ckError = error as? CKError, ckError.code != .serverRecordChanged {
-                    completion(.failure(ckError))
-                    return
-                }
-
-                Task { @MainActor in
-                    self.defaults.set(zoneID.zoneName, forKey: Keys.privateZoneName)
-                    completion(.success(zoneID))
-                }
-            }
-        }
-    }
-
-    private func fetchOrCreateZoneShare(
-        in zoneID: CKRecordZone.ID,
-        completion: @escaping (Result<CKShare, Error>) -> Void
-    ) {
-        let recordID = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: zoneID)
-        privateDatabase.fetch(withRecordID: recordID) { [weak self] record, error in
-            guard let self else { return }
-
-            if let share = record as? CKShare {
-                Task { @MainActor in
-                    self.ensureInviteLinkPermissions(for: share, completion: completion)
-                }
-                return
-            }
-
-            if let ckError = error as? CKError, ckError.code != .unknownItem {
-                completion(.failure(ckError))
-                return
-            }
-
-            let share = CKShare(recordZoneID: zoneID)
-            share[CKShare.SystemFieldKey.title] = "Whereabouts Family Circle" as CKRecordValue
-            share.publicPermission = .readWrite
-
-            self.privateDatabase.save(share) { savedRecord, error in
-                if let share = savedRecord as? CKShare {
-                    completion(.success(share))
+    func acceptPendingInvite() {
+        guard inviteTask == nil, hasPendingInvite else { return }
+        inviteTask = Task {
+            defer { inviteTask = nil }
+            do {
+                let user = try await verifyAccount(force: true)
+                let metadata: CKShare.Metadata
+                if let pendingMetadata { metadata = pendingMetadata }
+                else if let url = state.pendingInvite { metadata = try await transport.metadata(for: url) }
+                else { return }
+                let zone = metadata.share.recordID.zoneID
+                if metadata.participantRole == .owner || metadata.ownerIdentity.userRecordID?.recordName == user {
+                    invitationMessage = "This is your invitation. Other family members must open it on their phones."
                 } else {
-                    completion(.failure(error ?? CKError(.internalError)))
+                    if metadata.participantStatus != .accepted { try await transport.accept(metadata) }
+                    guard accountID == user else { throw CKError(.notAuthenticated) }
+                    activate(CircleScope(zoneName: zone.zoneName, ownerName: zone.ownerName, isOwner: false))
+                    invitationMessage = "You joined the family circle."
                 }
+                state.pendingInvite = nil
+                pendingMetadata = nil
+                try persist()
+                inviteEventID = UUID()
+                _ = await refresh()
+            } catch {
+                invitationMessage = "Could not join: " + Self.message(for: error)
+                inviteEventID = UUID()
             }
         }
     }
 
-    private func ensureInviteLinkPermissions(
-        for share: CKShare,
-        completion: @escaping (Result<CKShare, Error>) -> Void
-    ) {
-        guard share.publicPermission != .readWrite else {
-            completion(.success(share))
-            return
-        }
-
-        share.publicPermission = .readWrite
-        privateDatabase.save(share) { savedRecord, error in
-            if let share = savedRecord as? CKShare {
-                completion(.success(share))
-            } else {
-                completion(.failure(error ?? CKError(.internalError)))
-            }
-        }
-    }
-
-    private func resolveCurrentUserRecordName(completion: @escaping (Result<String, Error>) -> Void) {
-        if let cached = defaults.string(forKey: Keys.currentUserRecordName), cached.isEmpty == false {
-            completion(.success(cached))
-            return
-        }
-
-        container.fetchUserRecordID { [weak self] recordID, error in
-            if let recordID {
-                Task { @MainActor in
-                    self?.defaults.set(recordID.recordName, forKey: Keys.currentUserRecordName)
-                }
-                completion(.success(recordID.recordName))
-            } else {
-                completion(.failure(error ?? CKError(.notAuthenticated)))
-            }
-        }
-    }
-
-    private func cacheCurrentUserRecordID() {
-        resolveCurrentUserRecordName { _ in }
-    }
-
-    private var currentDeviceRecordNameFallback: String {
-        if let cached = defaults.string(forKey: Keys.currentUserRecordName), cached.isEmpty == false {
-            return cached
-        }
-
-        let fallback = "device-\(UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString)"
-        defaults.set(fallback, forKey: Keys.currentUserRecordName)
-        return fallback
-    }
-
-    private func member(from record: CKRecord) -> FamilyMember? {
-        guard let name = record["displayName"] as? String,
-              let latitude = record["latitude"] as? Double,
-              let longitude = record["longitude"] as? Double
-        else {
-            return nil
-        }
-
-        let updatedAt = record["updatedAt"] as? Date ?? Date()
-        let arrivedAt = record["arrivedAt"] as? Date ?? updatedAt
-        let address = record["address"] as? String
-
-        return member(
-            name: name,
-            latitude: latitude,
-            longitude: longitude,
-            address: address,
-            arrivedAt: arrivedAt,
-            updatedAt: updatedAt
-        )
-    }
-
-    private func member(
-        name: String,
-        latitude: Double,
-        longitude: Double,
-        address: String?,
-        arrivedAt: Date,
-        updatedAt: Date
-    ) -> FamilyMember {
-        FamilyMember(
-            name: name,
-            phoneNumber: nil,
-            emailAddress: nil,
-            device: "iPhone",
-            status: .live,
-            place: "Live shared location",
-            address: address ?? Self.coordinateSummary(latitude: latitude, longitude: longitude),
-            batteryLevel: 0,
-            updatedAt: updatedAt.formatted(.relative(presentation: .named)),
-            arrivedAt: arrivedAt,
-            lastLocationUpdate: updatedAt,
-            isLocationShared: true,
-            tint: .green,
-            latitude: latitude,
-            longitude: longitude,
-            speed: nil,
-            eta: nil
-        )
-    }
-
-    private func shouldPublish(_ location: CLLocation) -> Bool {
-        guard location.horizontalAccuracy >= 0 else { return false }
-
-        guard let lastPublishedLocation, let lastPublishedAt else {
-            return true
-        }
-
-        let movedFarEnough = location.distance(from: lastPublishedLocation) >= 50
-        let oldEnough = Date().timeIntervalSince(lastPublishedAt) >= 60
-        return movedFarEnough || oldEnough
-    }
-
-    private func markPublished(_ location: CLLocation) {
-        lastPublishedLocation = location
-        lastPublishedAt = Date()
-    }
-
-    private nonisolated static func arrivalDate(for location: CLLocation, existingRecord: CKRecord?) -> Date {
-        guard let existingRecord,
-              let latitude = existingRecord["latitude"] as? Double,
-              let longitude = existingRecord["longitude"] as? Double,
-              let arrivedAt = existingRecord["arrivedAt"] as? Date
-        else {
-            return Date()
-        }
-
-        let previousLocation = CLLocation(latitude: latitude, longitude: longitude)
-        let distance = location.distance(from: previousLocation)
-        return distance < 100 ? arrivedAt : Date()
-    }
-
-    private nonisolated static func resolveAddress(for location: CLLocation, completion: @escaping (String) -> Void) {
-        CLGeocoder().reverseGeocodeLocation(location) { placemarks, _ in
-            let placemark = placemarks?.first
-            let components = [
-                placemark?.subThoroughfare,
-                placemark?.thoroughfare,
-                placemark?.locality,
-                placemark?.administrativeArea
-            ]
-            .compactMap { $0 }
-
-            completion(components.isEmpty ? Self.coordinateSummary(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude) : components.joined(separator: ", "))
-        }
-    }
-
-    private nonisolated static func coordinateSummary(latitude: Double, longitude: Double) -> String {
-        "\(latitude.formatted(.number.precision(.fractionLength(5)))), \(longitude.formatted(.number.precision(.fractionLength(5))))"
-    }
-}
-
-final class CloudSharingDelegate: NSObject, UICloudSharingControllerDelegate {
-    static let shared = CloudSharingDelegate()
-
-    func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
-    }
-
-    func itemTitle(for csc: UICloudSharingController) -> String? {
-        "Whereabouts Family Circle"
-    }
-}
-
-#if DEBUG
-private extension CloudLocationSharingStore {
-    var localTestTransportURL: URL? {
-        guard let path = ProcessInfo.processInfo.environment["WHEREABOUTS_LOCAL_SHARING_FILE"],
-              path.isEmpty == false
-        else {
-            return nil
-        }
-
-        return URL(fileURLWithPath: path)
-    }
-
-    func publishToLocalTestTransport(
-        circleCode: String,
-        deviceID: String,
-        displayName: String,
-        location: CLLocation
-    ) -> Bool {
-        guard let localTestTransportURL else { return false }
-
-        do {
-            var records = try loadLocalTestRecords(from: localTestTransportURL)
-            records.removeAll { $0.circleCode == circleCode && $0.deviceID == deviceID }
-            records.append(
-                LocalSharedLocationRecord(
-                    circleCode: circleCode,
-                    deviceID: deviceID,
-                    displayName: displayName,
-                    latitude: location.coordinate.latitude,
-                    longitude: location.coordinate.longitude,
-                    horizontalAccuracy: location.horizontalAccuracy,
-                    address: Self.coordinateSummary(latitude: location.coordinate.latitude, longitude: location.coordinate.longitude),
-                    arrivedAt: Date(),
-                    updatedAt: Date()
-                )
-            )
-            try saveLocalTestRecords(records, to: localTestTransportURL)
-            markPublished(location)
-            statusMessage = "This device location is shared with your local test circle."
-        } catch {
-            statusMessage = "Could not publish local test location: \(error.localizedDescription)"
-        }
-
-        return true
-    }
-
-    func fetchFromLocalTestTransport(circleCode: String) -> Bool {
-        guard let localTestTransportURL else { return false }
-
-        do {
-            let records = try loadLocalTestRecords(from: localTestTransportURL)
-            remoteMembers = records
-                .filter { $0.circleCode == circleCode && $0.deviceID != currentDeviceRecordNameFallback }
-                .map {
-                    member(
-                        name: $0.displayName,
-                        latitude: $0.latitude,
-                        longitude: $0.longitude,
-                        address: $0.address,
-                        arrivedAt: $0.arrivedAt,
-                        updatedAt: $0.updatedAt
-                    )
-                }
-            statusMessage = remoteMembers.isEmpty
-                ? "No one has published a local test location yet."
-                : "Loaded \(remoteMembers.count) local test shared location\(remoteMembers.count == 1 ? "" : "s")."
-        } catch {
+    func activate(_ scope: CircleScope) {
+        if state.scope != scope {
+            if let previous = state.scope, let id = state.accountID { enqueueRemoval(scope: previous, accountID: id) }
+            state.pendingLocation = nil
+            state.arrival = nil
+            lastPublishedLocation = nil
+            lastPublishedAt = nil
             remoteMembers = []
-            statusMessage = "Could not load local test locations: \(error.localizedDescription)"
+            participants = []
         }
-
-        return true
+        state.scope = scope
+        state.restoreAllowed = true
+        saveOrReport()
+        circleRevision += 1
     }
 
-    func loadLocalTestRecords(from url: URL) throws -> [LocalSharedLocationRecord] {
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
-        let data = try Data(contentsOf: url)
-        return try JSONDecoder().decode([LocalSharedLocationRecord].self, from: data)
+    func removePublishedLocation(completion: (() -> Void)? = nil) {
+        publishingAllowed = false
+        state.pendingLocation = nil
+        state.arrival = nil
+        lastPublishedLocation = nil
+        lastPublishedAt = nil
+        if let scope = state.scope, let id = state.accountID { enqueueRemoval(scope: scope, accountID: id) }
+        saveOrReport()
+        startSync()
+        completion?()
     }
 
-    func saveLocalTestRecords(_ records: [LocalSharedLocationRecord], to url: URL) throws {
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let data = try JSONEncoder().encode(records)
-        try data.write(to: url, options: .atomic)
+    func leaveCircle(completion: (() -> Void)? = nil) {
+        removePublishedLocation()
+        Task {
+            defer { completion?() }
+            do {
+                guard let scope = state.scope else { return }
+                _ = try await verifyAccount(force: true)
+                try await transport.leave(scope)
+                guard state.scope == scope else { return }
+                state.scope = nil
+                state.restoreAllowed = false
+                state.removals.removeAll { $0.scope == scope }
+                remoteMembers = []
+                participants = []
+                try persist()
+                circleRevision += 1
+                statusMessage = "You left the family circle."
+            } catch { handle(error) }
+        }
+    }
+
+    func cloudSharingChanged() { fetchSharedLocations() }
+
+    private func refreshParticipants(in scope: CircleScope) async {
+        do {
+            let id = CKRecord.ID(recordName: CKRecordNameZoneWideShare, zoneID: scope.zoneID)
+            guard let share = try await transport.record(id, in: scope) as? CKShare, state.scope == scope else { return }
+            participants = share.participants.enumerated().filter { $0.element.userIdentity.userRecordID?.recordName != accountID }.map { index, participant in
+                let name = participant.userIdentity.nameComponents.map {
+                    PersonNameComponentsFormatter.localizedString(from: $0, style: .default)
+                } ?? ""
+                return CircleParticipant(id: participant.userIdentity.userRecordID?.recordName ?? "pending-\(index)",
+                    name: name.isEmpty ? "Family member" : name, accepted: participant.acceptanceStatus == .accepted)
+            }
+        } catch { }
+    }
+
+    private func enqueueRemoval(scope: CircleScope, accountID: String) {
+        let removal = PendingRemoval(scope: scope, accountID: accountID)
+        if !state.removals.contains(removal) { state.removals.append(removal) }
+    }
+
+    func startSync() {
+        guard state.pendingLocation != nil || !state.removals.isEmpty else { return }
+        guard syncTask == nil else { return }
+        retryTask?.cancel()
+        syncTask = Task {
+            defer { syncTask = nil }
+            let lease = BackgroundUploadLease { [weak self] in self?.syncTask?.cancel() }
+            defer { lease.end() }
+            do {
+                let id = try await verifyAccount()
+                try await flushOutbox(accountID: id)
+                retryAttempt = 0
+            } catch is CancellationError { }
+            catch { handle(error); scheduleRetry(error) }
+        }
+    }
+
+    func syncNow() async {
+        startSync()
+        await syncTask?.value
+    }
+
+    private func updateFreshness() {
+        remoteMembers = remoteMembers.map { member in
+            var member = member
+            let stale = Date().timeIntervalSince(member.lastLocationUpdate) > 180
+            member.status = stale ? .offline : .live
+            member.place = stale ? "Last known location" : "Shared location"
+            member.tint = stale ? .gray : .green
+            member.updatedAt = member.lastLocationUpdate.formatted(.relative(presentation: .named))
+            return member
+        }
+    }
+
+    func flushOutbox(accountID id: String) async throws {
+        try Task.checkCancellation()
+        while let removal = state.removals.first {
+            guard removal.accountID == id else { state.removals.removeFirst(); try persist(); continue }
+            try await transport.delete(CKRecord.ID(recordName: "location-" + id, zoneID: removal.scope.zoneID), in: removal.scope)
+            state.removals.removeAll { $0 == removal }
+            try persist()
+        }
+        while let pending = state.pendingLocation {
+            try Task.checkCancellation()
+            guard publishingAllowed else { return }
+            if let expiry = pending.expiresAt, expiry <= Date() {
+                publishingAllowed = false
+                state.pendingLocation = nil
+                enqueueRemoval(scope: pending.scope, accountID: id)
+                try persist()
+                try await flushOutbox(accountID: id)
+                return
+            }
+            guard pending.accountID == id, pending.scope == state.scope,
+                  pending.sample.isUsable(at: Date()) else {
+                state.pendingLocation = nil; try persist(); return
+            }
+            let recordID = CKRecord.ID(recordName: "location-" + id, zoneID: pending.scope.zoneID)
+            let record: CKRecord
+            do { record = try await transport.record(recordID, in: pending.scope) }
+            catch let error as CKError where error.code == .unknownItem {
+                record = CKRecord(recordType: "WhereaboutsLocation", recordID: recordID)
+            }
+            let address = await addressResolver(pending.sample.location)
+            try Task.checkCancellation()
+            guard publishingAllowed, state.pendingLocation?.id == pending.id, state.scope == pending.scope, accountID == id else { continue }
+            if let expiry = pending.expiresAt, expiry <= Date() { continue }
+            record["userRecordName"] = id as CKRecordValue
+            record["displayName"] = pending.displayName as CKRecordValue
+            record["latitude"] = pending.sample.latitude as CKRecordValue
+            record["longitude"] = pending.sample.longitude as CKRecordValue
+            record["horizontalAccuracy"] = pending.sample.accuracy as CKRecordValue
+            record["address"] = address as CKRecordValue
+            record["arrivedAt"] = pending.arrivedAt as CKRecordValue
+            record["updatedAt"] = pending.sample.timestamp as CKRecordValue
+            _ = try await transport.save(record, in: pending.scope)
+            // A pause or circle switch during a save must remove that in-flight write.
+            if !publishingAllowed || state.scope != pending.scope || accountID != id || pending.expiresAt.map({ $0 <= Date() }) == true {
+                enqueueRemoval(scope: pending.scope, accountID: id)
+                try persist()
+                try await transport.delete(recordID, in: pending.scope)
+                state.removals.removeAll { $0.scope == pending.scope && $0.accountID == id }
+            } else {
+                lastPublishedAt = pending.sample.timestamp
+                lastPublishedLocation = pending.sample.location
+                statusMessage = "Your location is shared."
+            }
+            if state.pendingLocation?.id == pending.id { state.pendingLocation = nil }
+            try persist()
+        }
+    }
+
+    private func scheduleRetry(_ error: Error) {
+        guard !state.removals.isEmpty || state.pendingLocation != nil else { return }
+        guard let ckError = error as? CKError,
+              [.networkFailure, .networkUnavailable, .serviceUnavailable, .requestRateLimited, .zoneBusy, .serverRecordChanged].contains(ckError.code) else { return }
+        retryAttempt += 1
+        let delay = max(ckError.retryAfterSeconds ?? 0, min(300, pow(2, Double(min(retryAttempt, 8)))))
+        retryTask = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(delay)) } catch { return }
+            self?.startSync()
+        }
+    }
+
+    private func persist() throws {
+        if let storageError { throw storageError }
+        try persistence.save(state)
+    }
+
+    @discardableResult private func saveOrReport() -> Bool {
+        do { try persist(); return true } catch { handle(error); return false }
+    }
+
+    private func handle(_ error: Error) {
+        statusMessage = Self.message(for: error)
+        if let ck = error as? CKError {
+            if [.zoneNotFound, .userDeletedZone, .permissionFailure].contains(ck.code) {
+                remoteMembers = []
+                participants = []
+                state.scope = nil
+                state.restoreAllowed = false
+                state.pendingLocation = nil
+                publishingAllowed = false
+                try? persist()
+                circleRevision += 1
+            }
+            if ck.code == .notAuthenticated { accountID = nil; verifiedAt = nil; publishingAllowed = false; remoteMembers = [] }
+        }
+    }
+
+    static func message(for error: Error) -> String {
+        guard let error = error as? CKError else { return error.localizedDescription }
+        switch error.code {
+        case .notAuthenticated: return "Sign in to iCloud in iPhone Settings, then retry."
+        case .networkFailure, .networkUnavailable: return "Offline. Your latest location will retry when connected."
+        case .zoneNotFound, .userDeletedZone, .permissionFailure: return "This circle is no longer available. Open a new invitation to reconnect."
+        case .serverRejectedRequest, .constraintViolation: return "iCloud could not complete this request. Please retry."
+        default: return error.localizedDescription
+        }
+    }
+
+    static func member(from record: CKRecord) -> FamilyMember? {
+        guard let name = record["displayName"] as? String, let lat = record["latitude"] as? Double,
+              let lon = record["longitude"] as? Double, (-90...90).contains(lat), (-180...180).contains(lon),
+              let updated = record["updatedAt"] as? Date else { return nil }
+        let stale = Date().timeIntervalSince(updated) > 180
+        return FamilyMember(id: record.recordID.zoneID.ownerName + "/" + record.recordID.recordName,
+            name: name, phoneNumber: nil, emailAddress: nil, device: "iPhone", status: stale ? .offline : .live,
+            place: stale ? "Last known location" : "Shared location", address: record["address"] as? String ?? "Address unavailable",
+            batteryLevel: -1, updatedAt: updated.formatted(.relative(presentation: .named)),
+            arrivedAt: record["arrivedAt"] as? Date ?? updated, lastLocationUpdate: updated, isLocationShared: true,
+            tint: stale ? .gray : .green, latitude: lat, longitude: lon, speed: nil, eta: nil)
+    }
+
+    private static func resolveAddress(_ location: CLLocation) async -> String {
+        let fallback = String(format: "%.3f, %.3f", location.coordinate.latitude, location.coordinate.longitude)
+        guard let place = try? await CLGeocoder().reverseGeocodeLocation(location).first else { return fallback }
+        let street = location.horizontalAccuracy < 1000 ? [place.subThoroughfare, place.thoroughfare].compactMap { $0 }.joined(separator: " ") : nil
+        let parts = [street, place.locality, place.administrativeArea].compactMap { $0 }.filter { !$0.isEmpty }
+        return parts.isEmpty ? fallback : parts.joined(separator: ", ")
     }
 }
 
-private struct LocalSharedLocationRecord: Codable {
-    var circleCode: String
-    var deviceID: String
-    var displayName: String
-    var latitude: Double
-    var longitude: Double
-    var horizontalAccuracy: Double
-    var address: String
-    var arrivedAt: Date
-    var updatedAt: Date
+@MainActor
+private final class BackgroundUploadLease {
+    private var identifier: UIBackgroundTaskIdentifier = .invalid
+    init(onExpiration: @escaping @MainActor () -> Void) {
+        identifier = UIApplication.shared.beginBackgroundTask(withName: "Whereabouts location sync") { [weak self] in
+            Task { @MainActor in
+                onExpiration()
+                self?.end()
+            }
+        }
+    }
+    func end() {
+        guard identifier != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(identifier)
+        identifier = .invalid
+    }
 }
-#endif
+
+struct CircleParticipant: Identifiable {
+    var id: String
+    var name: String
+    var accepted: Bool
+}
+
+enum SharingError: LocalizedError {
+    case alreadyJoined
+    var errorDescription: String? { "You already belong to a family circle. The owner manages invitations." }
+}

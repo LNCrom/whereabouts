@@ -11,15 +11,25 @@ final class LocationSharingStore: NSObject, ObservableObject {
         var id: String { rawValue }
     }
 
-    @Published var isLiveSharingEnabled = true {
-        didSet { updateLocationServices() }
+    @Published var isLiveSharingEnabled: Bool {
+        didSet {
+            defaults.set(isLiveSharingEnabled, forKey: Keys.liveSharing)
+            if isLiveSharingEnabled { updateExpiration() }
+            updateLocationServices()
+        }
     }
 
-    @Published var driveDetectionEnabled = true
-    @Published var lowBatteryAlertsEnabled = true
-    @Published var sharingWindow: SharingWindow = .always
-    @Published var allowsPreciseSharing = true {
-        didSet { updateLocationServices() }
+    @Published var sharingWindow: SharingWindow {
+        didSet {
+            defaults.set(sharingWindow.rawValue, forKey: Keys.sharingWindow)
+            if isLiveSharingEnabled { updateExpiration() }
+        }
+    }
+    @Published var allowsPreciseSharing: Bool {
+        didSet {
+            defaults.set(allowsPreciseSharing, forKey: Keys.preciseSharing)
+            updateLocationServices()
+        }
     }
 
     @Published private(set) var authorizationStatus: CLAuthorizationStatus
@@ -28,20 +38,36 @@ final class LocationSharingStore: NSObject, ObservableObject {
     @Published private(set) var locationErrorMessage: String?
 
     private let locationManager = CLLocationManager()
+    private let defaults: UserDefaults
+    private var sessionActive = false
 
-    override init() {
+    private enum Keys {
+        static let liveSharing = "whereabouts.location.liveSharing"
+        static let preciseSharing = "whereabouts.location.preciseSharing"
+        static let sharingWindow = "whereabouts.location.sharingWindow"
+        static let sharingExpiresAt = "whereabouts.location.sharingExpiresAt"
+    }
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        isLiveSharingEnabled = defaults.object(forKey: Keys.liveSharing) as? Bool ?? false
+        allowsPreciseSharing = defaults.object(forKey: Keys.preciseSharing) as? Bool ?? true
+        sharingWindow = SharingWindow(rawValue: defaults.string(forKey: Keys.sharingWindow) ?? "") ?? .always
         authorizationStatus = locationManager.authorizationStatus
         super.init()
         locationManager.delegate = self
         locationManager.activityType = .otherNavigation
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        enforceSharingExpiration()
         updateLocationServices()
     }
 
     var canShareLocation: Bool {
-        isLiveSharingEnabled && authorizationStatus.allowsLocationUse
+        sessionActive && isLiveSharingEnabled && authorizationStatus.allowsLocationUse
     }
+
+    var sharingExpiresAt: Date? { defaults.object(forKey: Keys.sharingExpiresAt) as? Date }
 
     var permissionSummary: String {
         switch authorizationStatus {
@@ -84,9 +110,10 @@ final class LocationSharingStore: NSObject, ObservableObject {
         locationManager.requestAlwaysAuthorization()
     }
 
-    func refreshCurrentLocation() {
+    func refreshCurrentLocation(requestPermission: Bool = true) {
+        enforceSharingExpiration()
         guard authorizationStatus.allowsLocationUse else {
-            requestWhenInUsePermission()
+            if requestPermission { requestWhenInUsePermission() }
             return
         }
 
@@ -94,16 +121,61 @@ final class LocationSharingStore: NSObject, ObservableObject {
         locationManager.requestLocation()
     }
 
+    func setSessionActive(_ active: Bool) {
+        guard sessionActive != active else { return }
+        sessionActive = active
+        updateLocationServices()
+    }
+
+    func stopSharing() {
+        isLiveSharingEnabled = false
+        defaults.removeObject(forKey: Keys.sharingExpiresAt)
+    }
+
+    func enforceSharingExpiration(now: Date = Date()) {
+        guard isLiveSharingEnabled,
+              let expiresAt = defaults.object(forKey: Keys.sharingExpiresAt) as? Date,
+              expiresAt <= now
+        else { return }
+        stopSharing()
+        locationErrorMessage = "Location sharing ended at the selected time."
+    }
+
+    private func updateExpiration(now: Date = Date()) {
+        let expiration: Date?
+        switch sharingWindow {
+        case .oneHour:
+            expiration = now.addingTimeInterval(60 * 60)
+        case .tonight:
+            expiration = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now)
+        case .always:
+            expiration = nil
+        }
+
+        if let expiration {
+            defaults.set(expiration, forKey: Keys.sharingExpiresAt)
+        } else {
+            defaults.removeObject(forKey: Keys.sharingExpiresAt)
+        }
+    }
+
     private func updateLocationServices() {
         locationManager.desiredAccuracy = allowsPreciseSharing ? kCLLocationAccuracyBest : kCLLocationAccuracyKilometer
-        locationManager.allowsBackgroundLocationUpdates = authorizationStatus == .authorizedAlways && isLiveSharingEnabled
+        locationManager.distanceFilter = 25
+        locationManager.allowsBackgroundLocationUpdates = authorizationStatus == .authorizedAlways && isLiveSharingEnabled && sessionActive
 
-        guard isLiveSharingEnabled, authorizationStatus.allowsLocationUse else {
+        guard sessionActive, isLiveSharingEnabled, authorizationStatus.allowsLocationUse else {
             locationManager.stopUpdatingLocation()
+            locationManager.stopMonitoringSignificantLocationChanges()
+            locationManager.stopMonitoringVisits()
             return
         }
 
         locationManager.startUpdatingLocation()
+        if authorizationStatus == .authorizedAlways {
+            locationManager.startMonitoringSignificantLocationChanges()
+            locationManager.startMonitoringVisits()
+        }
     }
 }
 
@@ -119,8 +191,10 @@ extension LocationSharingStore: CLLocationManagerDelegate {
         guard let location = locations.last else { return }
 
         Task { @MainActor in
+            enforceSharingExpiration()
+            guard location.horizontalAccuracy >= 0, abs(location.timestamp.timeIntervalSinceNow) < 300 else { return }
             currentLocation = location
-            lastLocationUpdate = Date()
+            lastLocationUpdate = location.timestamp
             locationErrorMessage = nil
         }
     }
@@ -128,6 +202,13 @@ extension LocationSharingStore: CLLocationManagerDelegate {
     nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         Task { @MainActor in
             locationErrorMessage = error.localizedDescription
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+        Task { @MainActor in
+            enforceSharingExpiration()
+            if canShareLocation { refreshCurrentLocation(requestPermission: false) }
         }
     }
 }

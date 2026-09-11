@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>destination</key><string>upload</string>
+	<key>iCloudContainerEnvironment</key><string>Production</string>
+	<key>manageAppVersionAndBuildNumber</key><false/>
+	<key>method</key><string>app-store-connect</string>
+	<key>provisioningProfiles</key>
+	<dict>
+		<key>com.lancecromwell.Whereabouts</key>
+		<string>Whereabouts App Store Push 20260911</string>
+	</dict>
+	<key>signingCertificate</key><string>Apple Distribution</string>
+	<key>signingStyle</key><string>manual</string>
+	<key>stripSwiftSymbols</key><true/>
+	<key>teamID</key><string>92QY292282</string>
+	<key>uploadSymbols</key><true/>
+</dict>
+</plist>

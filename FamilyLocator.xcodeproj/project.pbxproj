@@ -20,7 +20,23 @@
 		1A00001D2C17500100AA0001 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001D2C17500100AA0000 /* SignInView.swift */; };
 		1A00001E2C17500100AA0001 /* LockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001E2C17500100AA0000 /* LockView.swift */; };
 		1A00001F2C17500100AA0001 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A00001F2C17500100AA0000 /* AppDelegate.swift */; };
+		1A0000202C17500100AA0001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1A0000202C17500100AA0000 /* PrivacyInfo.xcprivacy */; };
+		1A0000212C17500100AA0001 /* LocationSharingStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000212C17500100AA0000 /* LocationSharingStoreTests.swift */; };
+		1A0000302C17500100AA0001 /* CloudKitTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000302C17500100AA0000 /* CloudKitTransport.swift */; };
+		1A0000312C17500100AA0001 /* SharingPersistence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000312C17500100AA0000 /* SharingPersistence.swift */; };
+		1A0000322C17500100AA0001 /* SharingRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000322C17500100AA0000 /* SharingRuntime.swift */; };
 /* End PBXBuildFile section */
+        1A0000332C17500100AA0001 /* SharingArchitectureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000332C17500100AA0000 /* SharingArchitectureTests.swift */; };
+
+/* Begin PBXContainerItemProxy section */
+		1A0000272C17500100AA0000 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 1A0000112C17500100AA0000 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1A00000D2C17500100AA0000;
+			remoteInfo = FamilyLocator;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		1A0000012C17500100AA0000 /* FamilyLocatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyLocatorApp.swift; sourceTree = "<group>"; };
@@ -39,7 +55,14 @@
 		1A00001D2C17500100AA0000 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		1A00001E2C17500100AA0000 /* LockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LockView.swift; sourceTree = "<group>"; };
 		1A00001F2C17500100AA0000 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		1A0000202C17500100AA0000 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		1A0000212C17500100AA0000 /* LocationSharingStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationSharingStoreTests.swift; sourceTree = "<group>"; };
+		1A0000222C17500100AA0000 /* FamilyLocatorTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FamilyLocatorTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		1A0000302C17500100AA0000 /* CloudKitTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudKitTransport.swift; sourceTree = "<group>"; };
+		1A0000312C17500100AA0000 /* SharingPersistence.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingPersistence.swift; sourceTree = "<group>"; };
+		1A0000322C17500100AA0000 /* SharingRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingRuntime.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+        1A0000332C17500100AA0000 /* SharingArchitectureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharingArchitectureTests.swift; sourceTree = "<group>"; };
 
 /* Begin PBXFrameworksBuildPhase section */
 		1A0000092C17500100AA0000 /* Frameworks */ = {
@@ -49,6 +72,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1A0000232C17500100AA0000 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -56,14 +80,24 @@
 			isa = PBXGroup;
 			children = (
 				1A00000B2C17500100AA0000 /* FamilyLocator */,
+				1A00002C2C17500100AA0000 /* FamilyLocatorTests */,
 				1A00000C2C17500100AA0000 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		1A00002C2C17500100AA0000 /* FamilyLocatorTests */ = {
+			isa = PBXGroup;
+			children = (1A0000212C17500100AA0000 /* LocationSharingStoreTests.swift */, 1A0000332C17500100AA0000 /* SharingArchitectureTests.swift */,);
+			path = FamilyLocatorTests;
 			sourceTree = "<group>";
 		};
 		1A00000B2C17500100AA0000 /* FamilyLocator */ = {
 			isa = PBXGroup;
 			children = (
 				1A0000012C17500100AA0000 /* FamilyLocatorApp.swift */,
+				1A0000302C17500100AA0000 /* CloudKitTransport.swift */,
+				1A0000312C17500100AA0000 /* SharingPersistence.swift */,
+				1A0000322C17500100AA0000 /* SharingRuntime.swift */,
 				1A00001C2C17500100AA0000 /* AuthStore.swift */,
 				1A00001F2C17500100AA0000 /* AppDelegate.swift */,
 				1A00001D2C17500100AA0000 /* SignInView.swift */,
@@ -77,6 +111,7 @@
 				1A0000192C17500100AA0000 /* CloudLocationSharingStore.swift */,
 				1A00001B2C17500100AA0000 /* Info.plist */,
 				1A00001A2C17500100AA0000 /* FamilyLocator.entitlements */,
+				1A0000202C17500100AA0000 /* PrivacyInfo.xcprivacy */,
 				1A0000072C17500100AA0000 /* Assets.xcassets */,
 			);
 			path = FamilyLocator;
@@ -86,6 +121,7 @@
 			isa = PBXGroup;
 			children = (
 				1A0000082C17500100AA0000 /* FamilyLocator.app */,
+				1A0000222C17500100AA0000 /* FamilyLocatorTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -109,6 +145,17 @@
 			productName = FamilyLocator;
 			productReference = 1A0000082C17500100AA0000 /* FamilyLocator.app */;
 			productType = "com.apple.product-type.application";
+		};
+		1A0000262C17500100AA0000 /* FamilyLocatorTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 1A00002B2C17500100AA0000 /* Build configuration list for PBXNativeTarget "FamilyLocatorTests" */;
+			buildPhases = (1A0000242C17500100AA0000 /* Sources */, 1A0000232C17500100AA0000 /* Frameworks */, 1A0000252C17500100AA0000 /* Resources */,);
+			buildRules = ();
+			dependencies = (1A0000282C17500100AA0000 /* PBXTargetDependency */,);
+			name = FamilyLocatorTests;
+			productName = FamilyLocatorTests;
+			productReference = 1A0000222C17500100AA0000 /* FamilyLocatorTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -144,8 +191,9 @@
 			productRefGroup = 1A00000C2C17500100AA0000 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (
+				targets = (
 				1A00000D2C17500100AA0000 /* FamilyLocator */,
+				1A0000262C17500100AA0000 /* FamilyLocatorTests */,
 			);
 		};
 /* End PBXProject section */
@@ -156,9 +204,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A0000072C17500100AA0001 /* Assets.xcassets in Resources */,
+				1A0000202C17500100AA0001 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1A0000252C17500100AA0000 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -167,6 +217,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				1A0000012C17500100AA0001 /* FamilyLocatorApp.swift in Sources */,
+				1A0000302C17500100AA0001 /* CloudKitTransport.swift in Sources */,
+				1A0000312C17500100AA0001 /* SharingPersistence.swift in Sources */,
+				1A0000322C17500100AA0001 /* SharingRuntime.swift in Sources */,
 				1A0000022C17500100AA0001 /* Models.swift in Sources */,
 				1A0000032C17500100AA0001 /* ContentView.swift in Sources */,
 				1A0000042C17500100AA0001 /* DashboardView.swift in Sources */,
@@ -181,7 +234,12 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		1A0000242C17500100AA0000 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (1A0000212C17500100AA0001 /* LocationSharingStoreTests.swift in Sources */, 1A0000332C17500100AA0001 /* SharingArchitectureTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		1A0000282C17500100AA0000 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 1A00000D2C17500100AA0000 /* FamilyLocator */; targetProxy = 1A0000272C17500100AA0000 /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		1A0000132C17500100AA0000 /* Debug */ = {
@@ -310,7 +368,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FamilyLocator/FamilyLocator.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = 92QY292282;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FamilyLocator/Info.plist;
@@ -335,7 +393,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FamilyLocator/FamilyLocator.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 8;
+				CURRENT_PROJECT_VERSION = 10;
 				DEVELOPMENT_TEAM = 92QY292282;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FamilyLocator/Info.plist;
@@ -353,6 +411,8 @@
 			};
 			name = Release;
 		};
+		1A0000292C17500100AA0000 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 92QY292282; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.lancecromwell.WhereaboutsTests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FamilyLocator.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FamilyLocator"; }; name = Debug; };
+		1A00002A2C17500100AA0000 /* Release */ = {isa = XCBuildConfiguration; buildSettings = { BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = 92QY292282; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = com.lancecromwell.WhereaboutsTests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = "1,2"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FamilyLocator.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/FamilyLocator"; }; name = Release; };
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -374,6 +434,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		1A00002B2C17500100AA0000 /* Build configuration list for PBXNativeTarget "FamilyLocatorTests" */ = {isa = XCConfigurationList; buildConfigurations = (1A0000292C17500100AA0000 /* Debug */, 1A00002A2C17500100AA0000 /* Release */,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 /* End XCConfigurationList section */
 	};
 	rootObject = 1A0000112C17500100AA0000 /* Project object */;

@@ -5,6 +5,7 @@ struct SettingsView: View {
     @ObservedObject var auth: AuthStore
     @ObservedObject var locationSharing: LocationSharingStore
     @ObservedObject var cloudSharing: CloudLocationSharingStore
+    @State private var isConfirmingCircleExit = false
 
     var body: some View {
         List {
@@ -21,7 +22,10 @@ struct SettingsView: View {
                 )
 
                 Button(role: .destructive) {
-                    auth.signOut()
+                    locationSharing.stopSharing()
+                    cloudSharing.removePublishedLocation {
+                        auth.signOut()
+                    }
                 } label: {
                     Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
@@ -42,13 +46,9 @@ struct SettingsView: View {
                     Label("Precise sharing", systemImage: "scope")
                 }
 
-                Toggle(isOn: $locationSharing.driveDetectionEnabled) {
-                    Label("Drive detection", systemImage: "car.fill")
-                }
-
-                Toggle(isOn: $locationSharing.lowBatteryAlertsEnabled) {
-                    Label("Low battery alerts", systemImage: "battery.25percent")
-                }
+                Text("Timed sharing stops location updates automatically. You can also pause sharing immediately at any time.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Permissions") {
@@ -99,6 +99,14 @@ struct SettingsView: View {
                 } label: {
                     Label("Refresh Whereabouts sharing", systemImage: "arrow.clockwise")
                 }
+
+                if cloudSharing.hasActiveCircle {
+                    Button(role: .destructive) {
+                        isConfirmingCircleExit = true
+                    } label: {
+                        Label(cloudSharing.isCircleOwner ? "Delete Whereabouts Circle" : "Leave Whereabouts Circle", systemImage: "person.crop.circle.badge.minus")
+                    }
+                }
             } header: {
                 Text("Whereabouts Circle")
             } footer: {
@@ -133,6 +141,21 @@ struct SettingsView: View {
             }
         }
         .navigationTitle("Privacy")
+        .confirmationDialog(
+            cloudSharing.isCircleOwner ? "Delete this Whereabouts circle?" : "Leave this Whereabouts circle?",
+            isPresented: $isConfirmingCircleExit,
+            titleVisibility: .visible
+        ) {
+            Button(cloudSharing.isCircleOwner ? "Delete Circle and Shared Locations" : "Leave Circle", role: .destructive) {
+                locationSharing.stopSharing()
+                cloudSharing.leaveCircle()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(cloudSharing.isCircleOwner
+                 ? "This deletes the CloudKit circle and removes access for every participant. This cannot be undone."
+                 : "Your published location will be removed and this device will forget the circle.")
+        }
     }
 
     private func openAppSettings() {

@@ -4,13 +4,13 @@ import SwiftUI
 struct FamilyLocatorApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
-    @StateObject private var auth = AuthStore()
+    @StateObject private var auth = SharingRuntime.shared.auth
 
     var body: some Scene {
         WindowGroup {
             Group {
                 if auth.canEnterApp {
-                    ContentView(auth: auth)
+                    ContentView(auth: auth, locationSharing: SharingRuntime.shared.location, cloudSharing: SharingRuntime.shared.cloud)
                 } else if auth.isSignedIn {
                     LockView(auth: auth)
                 } else {
@@ -18,9 +18,7 @@ struct FamilyLocatorApp: App {
                 }
             }
             .onChange(of: scenePhase) { _, newPhase in
-                if newPhase == .background {
-                    auth.lock()
-                }
+                SharingRuntime.shared.phaseChanged(newPhase)
             }
         }
     }

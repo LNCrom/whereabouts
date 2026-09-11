@@ -1,11 +1,13 @@
 import Foundation
 import LocalAuthentication
+import CloudKit
 
 @MainActor
 final class AuthStore: ObservableObject {
     @Published private(set) var profile: UserProfile?
     @Published private(set) var isUnlocked = false
     @Published private(set) var authenticationError: String?
+    @Published private(set) var isAuthenticating = false
 
     private let defaults: UserDefaults
 
@@ -40,10 +42,23 @@ final class AuthStore: ObservableObject {
     }
 
     func signIn(name: String, email: String) {
+        guard !isAuthenticating else { return }
+        isAuthenticating = true
+        authenticationError = nil
+        Task {
+            defer { isAuthenticating = false }
+            do {
+                let accountID = try await CloudKitTransport().accountID()
+                finishSignIn(name: name, email: email, accountID: accountID)
+            } catch { authenticationError = CloudLocationSharingStore.message(for: error) }
+        }
+    }
+
+    func finishSignIn(name: String, email: String, accountID: String) {
         let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         let profile = UserProfile(
-            id: defaults.string(forKey: UserProfile.Keys.id) ?? UUID().uuidString,
+            id: accountID,
             name: trimmedName,
             email: trimmedEmail
         )
@@ -59,6 +74,13 @@ final class AuthStore: ObservableObject {
         profile = nil
         isUnlocked = false
         authenticationError = nil
+    }
+
+    func bindLegacyProfile(to accountID: String) {
+        guard var profile, UUID(uuidString: profile.id) != nil else { return }
+        profile.id = accountID
+        profile.save(to: defaults)
+        self.profile = profile
     }
 
     func lock() {
@@ -133,8 +155,7 @@ struct UserProfile: Equatable {
     static func load(from defaults: UserDefaults) -> UserProfile? {
         guard let id = defaults.string(forKey: Keys.id),
               let name = defaults.string(forKey: Keys.name),
-              let email = defaults.string(forKey: Keys.email),
-              email.isEmpty == false
+              let email = defaults.string(forKey: Keys.email)
         else {
             return nil
         }

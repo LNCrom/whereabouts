@@ -7,8 +7,7 @@ struct SignInView: View {
     @State private var email = ""
 
     private var canContinue: Bool {
-        name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false &&
-        email.trimmingCharacters(in: .whitespacesAndNewlines).contains("@")
+        !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !auth.isAuthenticating
     }
 
     var body: some View {
@@ -16,7 +15,7 @@ struct SignInView: View {
             VStack(spacing: 24) {
                 Spacer(minLength: 24)
 
-                Image("AppIcon")
+                Image("WhereaboutsLogo")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 92, height: 92)
@@ -26,7 +25,7 @@ struct SignInView: View {
                     Text("Sign in to Whereabouts")
                         .font(.title.weight(.bold))
 
-                    Text("Your profile identifies who is sharing location in your family circle.")
+                    Text("Use the iCloud account on this iPhone.")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
@@ -37,26 +36,21 @@ struct SignInView: View {
                         .textContentType(.name)
                         .textInputAutocapitalization(.words)
 
-                    TextField("Email", text: $email)
-                        .textContentType(.emailAddress)
-                        .textInputAutocapitalization(.never)
-                        .keyboardType(.emailAddress)
                 }
                 .textFieldStyle(.roundedBorder)
 
                 Button {
                     auth.signIn(name: name, email: email)
                 } label: {
-                    Label("Continue", systemImage: "person.crop.circle.badge.checkmark")
+                    Label(auth.isAuthenticating ? "Connecting..." : "Continue with iCloud", systemImage: "icloud")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(canContinue == false)
 
-                Text("Find My sharing still stays inside Apple Find My. Whereabouts uses its own signed-in family circle.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                if let error = auth.authenticationError {
+                    Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center)
+                }
 
                 Spacer()
             }

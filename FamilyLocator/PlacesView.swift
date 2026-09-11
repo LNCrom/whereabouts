@@ -6,160 +6,127 @@ struct PeopleView: View {
     @Binding var members: [FamilyMember]
     @Binding var selectedMember: FamilyMember?
     @ObservedObject var cloudSharing: CloudLocationSharingStore
-
-    @State private var preparedInvite: PreparedWhereaboutsInvite?
-    @State private var inviteErrorMessage: String?
+    @ObservedObject var locationSharing: LocationSharingStore
+    @State private var preparedShare: PreparedShare?
+    @State private var inviteError: String?
 
     var body: some View {
         List {
-            Section {
-                Button {
-                    prepareCloudInvite()
-                } label: {
-                    if cloudSharing.isPreparingShare {
-                        Label("Preparing invite...", systemImage: "icloud.and.arrow.up")
-                    } else {
-                        Label(cloudSharing.sharingTitle, systemImage: "person.2.badge.plus")
+            if let message = cloudSharing.invitationMessage {
+                Section {
+                    Text(message)
+                    if cloudSharing.hasPendingInvite {
+                        Button("Retry joining") { cloudSharing.acceptPendingInvite() }
                     }
                 }
-                .disabled(cloudSharing.isPreparingShare)
-
-                Label("Apple sends and approves the iCloud invite", systemImage: "checkmark.icloud.fill")
-                Label("Approved members publish location into the shared circle", systemImage: "location.fill")
-            } header: {
-                Text("Invite link")
-            } footer: {
-                Text("\(cloudSharing.statusMessage) Send this link only to people you want in your Whereabouts circle.")
             }
-
-            Section("Shared phones") {
-                if cloudSharing.remoteMembers.isEmpty {
-                    ContentUnavailableView(
-                        "No shared phones yet",
-                        systemImage: "iphone.gen3.radiowaves.left.and.right",
-                        description: Text("Send the invite link. After someone opens it in Whereabouts and allows location, they appear here.")
-                    )
-                } else {
-                    ForEach(cloudSharing.remoteMembers) { member in
-                        Button {
-                            selectedMember = member
-                        } label: {
-                            PersonRow(member: member, isSelected: member.id == selectedMember?.id)
+            Section("Family circle") {
+                if !cloudSharing.hasActiveCircle || cloudSharing.isCircleOwner {
+                    Button {
+                        cloudSharing.prepareShare { result in
+                            switch result {
+                            case .success(let value): preparedShare = PreparedShare(share: value.share, container: value.container)
+                            case .failure(let error): inviteError = CloudLocationSharingStore.message(for: error)
+                            }
                         }
-                        .buttonStyle(.plain)
+                    } label: {
+                        Label(cloudSharing.isPreparingShare ? "Preparing invitation..." : cloudSharing.sharingTitle,
+                              systemImage: "person.badge.plus")
                     }
+                    .disabled(cloudSharing.isPreparingShare)
+                } else {
+                    Label("Joined family circle", systemImage: "person.2.fill")
+                }
+                ForEach(cloudSharing.participants) { person in
+                    LabeledContent(person.name, value: person.accepted ? "Joined" : "Invitation pending")
                 }
             }
+
+            if cloudSharing.hasActiveCircle {
+                Section("This iPhone") {
+                    Toggle("Share my location", isOn: $locationSharing.isLiveSharingEnabled)
+                    LabeledContent("Location access", value: locationSharing.permissionSummary)
+                    if locationSharing.authorizationStatus == .notDetermined {
+                        Button("Allow location") { locationSharing.requestWhenInUsePermission() }
+                    } else if locationSharing.authorizationStatus == .authorizedWhenInUse {
+                        Button("Allow sharing in the background") { locationSharing.requestAlwaysPermission() }
+                    } else if locationSharing.authorizationStatus == .denied || locationSharing.authorizationStatus == .restricted {
+                        Button("Open iPhone Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) }
+                        }
+                    }
+                    LabeledContent("Last sent", value: cloudSharing.lastPublishedAt?.formatted(.relative(presentation: .named)) ?? "Not sent yet")
+                }
+            }
+
+            Section {
+                if cloudSharing.remoteMembers.isEmpty {
+                    ContentUnavailableView("No shared locations yet", systemImage: "location.slash")
+                }
+                ForEach(cloudSharing.remoteMembers) { member in
+                    Button {
+                        selectedMember = member
+                    } label: {
+                        HStack {
+                            Image(systemName: "person.crop.circle.fill").font(.title2).foregroundStyle(member.tint)
+                            VStack(alignment: .leading) {
+                                Text(member.name).foregroundStyle(.primary)
+                                Text(member.place).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(member.lastLocationUpdate, style: .relative).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            } header: { Text("Shared locations") }
+              footer: { Text(cloudSharing.statusMessage) }
         }
         .navigationTitle("People")
-        .sheet(item: $preparedInvite) { invite in
-            ActivityController(items: [
-                "Join my Whereabouts family circle to share live locations.",
-                invite.url
-            ])
+        .refreshable { _ = await cloudSharing.refresh() }
+        .sheet(item: $preparedShare) { prepared in
+            CloudInviteController(share: prepared.share, container: prepared.container, store: cloudSharing) { inviteError = $0 }
         }
-        .alert("Could not prepare invite", isPresented: inviteErrorBinding) {
-            Button("OK", role: .cancel) {
-                inviteErrorMessage = nil
-            }
-        } message: {
-            Text(inviteErrorMessage ?? "Try again in a moment.")
-        }
-    }
-
-    private func prepareCloudInvite() {
-        cloudSharing.prepareShare { result in
-            switch result {
-            case .success(let preparedShare):
-                guard let url = preparedShare.share.url else {
-                    inviteErrorMessage = "Whereabouts created the iCloud share, but Apple did not return an invite link. Try again in a moment."
-                    return
-                }
-
-                preparedInvite = PreparedWhereaboutsInvite(url: url)
-            case .failure(let error):
-                inviteErrorMessage = error.localizedDescription
-            }
-        }
-    }
-
-    private var inviteErrorBinding: Binding<Bool> {
-        Binding {
-            inviteErrorMessage != nil
-        } set: { isPresented in
-            if isPresented == false {
-                inviteErrorMessage = nil
-            }
-        }
+        .alert("Invitation unavailable", isPresented: Binding(get: { inviteError != nil }, set: { if !$0 { inviteError = nil } })) {
+            Button("OK") { inviteError = nil }
+        } message: { Text(inviteError ?? "") }
     }
 }
 
-private struct PreparedWhereaboutsInvite: Identifiable {
+private struct PreparedShare: Identifiable {
     let id = UUID()
-    let url: URL
+    let share: CKShare
+    let container: CKContainer
 }
 
-private struct PersonRow: View {
-    var member: FamilyMember
-    var isSelected: Bool
+private struct CloudInviteController: UIViewControllerRepresentable {
+    let share: CKShare
+    let container: CKContainer
+    let store: CloudLocationSharingStore
+    let onError: (String) -> Void
 
-    var body: some View {
-        HStack(spacing: 12) {
-            Text(String(member.name.prefix(1)))
-                .font(.headline.weight(.bold))
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(member.tint, in: Circle())
+    func makeCoordinator() -> Coordinator { Coordinator(store: store, onError: onError) }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text(member.name)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                Text(member.isLocationShared ? member.place : "Invite required before live sharing")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
+    func makeUIViewController(context: Context) -> UICloudSharingController {
+        let controller = UICloudSharingController(share: share, container: container)
+        controller.availablePermissions = [.allowPrivate, .allowReadWrite]
+        controller.delegate = context.coordinator
+        return controller
+    }
 
-            Spacer()
+    func updateUIViewController(_ uiViewController: UICloudSharingController, context: Context) {}
 
-            VStack(alignment: .trailing, spacing: 5) {
-                Text(member.status.rawValue)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(member.status.color)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(member.status.color.opacity(0.12), in: Capsule())
-
-                if isSelected {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(.blue)
-                }
-            }
+    final class Coordinator: NSObject, UICloudSharingControllerDelegate {
+        let store: CloudLocationSharingStore
+        let onError: (String) -> Void
+        init(store: CloudLocationSharingStore, onError: @escaping (String) -> Void) {
+            self.store = store
+            self.onError = onError
         }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-    }
-}
-
-private struct ActivityController: UIViewControllerRepresentable {
-    var items: [Any]
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {
-    }
-}
-
-struct PeopleView_Previews: PreviewProvider {
-    static var previews: some View {
-        NavigationStack {
-            PeopleView(
-                members: .constant(FamilyFixtures.members),
-                selectedMember: .constant(FamilyFixtures.members[0]),
-                cloudSharing: CloudLocationSharingStore()
-            )
+        func itemTitle(for csc: UICloudSharingController) -> String? { "Whereabouts Family Circle" }
+        func cloudSharingController(_ csc: UICloudSharingController, failedToSaveShareWithError error: Error) {
+            onError(CloudLocationSharingStore.message(for: error))
         }
+        func cloudSharingControllerDidSaveShare(_ csc: UICloudSharingController) { store.cloudSharingChanged() }
+        func cloudSharingControllerDidStopSharing(_ csc: UICloudSharingController) { store.cloudSharingChanged() }
     }
 }

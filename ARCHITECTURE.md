@@ -1,6 +1,6 @@
 # Whereabouts Architecture
 
-Updated September 12, 2026. This describes the implementation in build 1.0 (11), not a claim of physical-device validation or TestFlight availability.
+Updated September 12, 2026. This describes the implementation in build 1.0 (11), not a claim of physical-device validation. TestFlight state below was verified on that date and may change.
 
 ## Decision
 
@@ -99,7 +99,7 @@ Build 11 verification on September 12, 2026:
 - All 36 tests passed on iPhone 16e / iOS 26.2 and iPhone 17e / iOS 26.5 simulators, with normal Xcode test signing.
 - Manual simulator UI checks covered the invitation entry sheet, actionable rejection of an installation link, missing-iCloud recovery, a wrapped deep link, persisted recovery after termination/relaunch, and portrait/landscape layouts. These checks used the DEBUG-only local sign-in bypass, not real Apple identities.
 - The Release archive and IPA export succeeded. Signature verification passed. Exported entitlements specify only the Whereabouts container, Production CloudKit, production APNs, and get-task-allow=false. The app icon and version 1.0 (11) are present. DEBUG authentication-bypass strings are absent from the Release executable.
-- App Store Connect accepted the upload without errors. Upload acceptance alone does not prove processing, beta approval, group access, or installation on a phone.
+- App Store Connect accepted the upload without errors. Subsequent API readback confirmed build 85f74193-dcbc-479b-a661-e79187c8a227 is VALID, beta review is APPROVED, and external status is IN_BETA_TESTING with automatic tester notifications enabled. External QA, the sole existing group, includes build 11. English test notes were saved and read back. This proves beta availability, not installation on a phone.
 - No server schema change is required. A fresh command-line production-schema export could not run because this session had no CloudKit management token; this run does not establish new production-schema evidence.
 
 Simulator tests do not prove Apple's account authorization, invitation delivery, production schema, APNs delivery, or physical-device background scheduling.

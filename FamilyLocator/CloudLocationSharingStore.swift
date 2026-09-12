@@ -212,7 +212,8 @@ final class CloudLocationSharingStore: ObservableObject {
         }
     }
 
-    func prepareShare(completion: @escaping (Result<(share: CKShare, container: CKContainer), Error>) -> Void) {
+    func prepareShare(recipient: InvitationRecipient? = nil,
+                      completion: @escaping (Result<(share: CKShare, container: CKContainer, entryURL: URL?), Error>) -> Void) {
         guard !isPreparingShare else { return }
         guard !(hasActiveCircle && !isCircleOwner) else {
             completion(.failure(SharingError.alreadyJoined)); return
@@ -258,12 +259,19 @@ final class CloudLocationSharingStore: ObservableObject {
                 guard let saved = try await transport.save(share, in: scope) as? CKShare else { throw CKError(.internalError) }
                 guard sharePreparationID == preparation, accountID == user else { return }
                 guard !hasPendingInvite else { throw InvitationError.changed }
+                let entryURL: URL?
+                if let recipient {
+                    let url = try await transport.invite(recipient, to: saved, in: scope)
+                    entryURL = try InvitationLink.entryURL(for: url)
+                    guard sharePreparationID == preparation, accountID == user else { return }
+                    guard !hasPendingInvite else { throw InvitationError.changed }
+                } else { entryURL = nil }
                 activate(scope)
                 try persist()
                 isCircleVerified = true
                 invitationMessage = nil
                 statusMessage = "Choose who to invite."
-                completion(.success((saved, (transport as? CloudKitTransport)?.container ?? CKContainer(identifier: CloudKitTransport.containerID))))
+                completion(.success((saved, (transport as? CloudKitTransport)?.container ?? CKContainer(identifier: CloudKitTransport.containerID), entryURL)))
             } catch {
                 guard sharePreparationID == preparation else { return }
                 handle(error)

@@ -20,6 +20,7 @@ protocol LocationCloudTransport {
     func leave(_ scope: CircleScope) async throws
     func invitation(for url: URL) async throws -> CircleInvitation
     func accept(_ invitation: CircleInvitation) async throws
+    func invite(_ recipient: InvitationRecipient, to share: CKShare, in scope: CircleScope) async throws -> URL
     func subscribe(shared: Bool) async throws
 }
 
@@ -101,5 +102,27 @@ final class CloudKitTransport: LocationCloudTransport {
         info.shouldSendContentAvailable = true
         subscription.notificationInfo = info
         _ = try await database.save(subscription)
+    }
+
+    func invite(_ recipient: InvitationRecipient, to share: CKShare, in scope: CircleScope) async throws -> URL {
+        guard scope.isOwner else { throw SharingError.alreadyJoined }
+        let person: CKShare.Participant
+        switch recipient {
+        case .email(let address): person = try await container.shareParticipant(forEmailAddress: address)
+        case .phone(let number): person = try await container.shareParticipant(forPhoneNumber: number)
+        }
+        // In-app acceptance cannot complete Apple's out-of-network email-vetting flow.
+        guard person.userIdentity.hasiCloudAccount, let identity = person.userIdentity.userRecordID else {
+            throw InvitationError.recipientNotFound
+        }
+        guard identity != share.owner.userIdentity.userRecordID else { throw InvitationError.selfInvitation }
+        person.permission = .readWrite
+        share.publicPermission = .none
+        share.addParticipant(person)
+        guard let saved = try await save(share, in: scope) as? CKShare,
+              saved.publicPermission == .none,
+              saved.participants.contains(where: { $0.userIdentity.userRecordID == identity && $0.permission == .readWrite }),
+              let url = saved.url else { throw InvitationError.unconfirmed }
+        return url
     }
 }

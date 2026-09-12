@@ -287,5 +287,6 @@ private final class FakeCloud: LocationCloudTransport {
     func leave(_ scope: CircleScope) async throws { try check(); left.append(scope) }
     func invitation(for url: URL) async throws -> CircleInvitation { throw CKError(.unknownItem) }
     func accept(_ invitation: CircleInvitation) async throws { try check() }
+    func invite(_ recipient: InvitationRecipient, to share: CKShare, in scope: CircleScope) async throws -> URL { throw CKError(.unknownItem) }
     func subscribe(shared: Bool) async throws { try check() }
 }

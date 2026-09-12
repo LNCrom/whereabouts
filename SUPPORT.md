@@ -20,13 +20,19 @@ Whereabouts stores consented location updates in Apple's CloudKit service. Every
 
 1. Update every phone to the same current TestFlight build.
 2. Continue with iCloud and choose a display name on each phone.
-3. One person creates the family circle from People, then selects the family members in Apple's invitation sheet. Send invitations to the Apple accounts those phones use for iCloud.
-4. Each recipient opens the iCloud invitation, unlocks Whereabouts, reviews who sent it, and taps Join family circle. Check that Connection says Connected. Joining does not turn on location sharing.
+3. One person chooses People > Invite family. Enter the recipient's Apple Account email or international phone number, or choose that detail from Contacts. Prepare and send the invitation through Messages or another sharing option. If Apple cannot match the account, ask for the Apple Account email shown in that person's iPhone Settings.
+4. Each recipient opens the Whereabouts invitation page and taps Open in Whereabouts. Unlock the app, review who sent the invitation, and tap Join family circle. Check that Connection says Connected. Joining does not turn on location sharing.
 5. Each person turns on Share my location and approves location access. Choose Always in iPhone Settings for sharing while the app is in the background.
 
 The sender opening their own invitation does not add another person. A person who has already joined should not create another circle.
 
 The TestFlight link installs the app only. It does not connect two phones. If an iCloud invitation only opens the app or Apple's routing fails, copy that iCloud invitation link and use People > Join with invitation > Review invitation. The app retains valid invitations through sign-in and relaunch. Replacing or dismissing an invitation cancels the prior local attempt.
+
+### Invitation Opens Cigar Curator
+
+Apple's download metadata for a Whereabouts iCloud invitation was confirmed to name Cigar Curator, despite corrected App ID assignments. Build 12 sends a Whereabouts-specific entry-page link that avoids that lookup. Update the sender to build 12 and send through Invite family. The receiver's Open action works with build 11 or later; updating both phones is recommended.
+
+Previously sent raw iCloud links are not rewritten. Do not install Cigar Curator to join Whereabouts, and do not delete your circle. Use the in-app paste option for an old link. Manage members is for reviewing or revoking participation; send new invitations through Invite family to get the Whereabouts-specific link.
 
 ## Status and Recovery
 

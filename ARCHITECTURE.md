@@ -1,6 +1,6 @@
 # Whereabouts Architecture
 
-Updated September 12, 2026. This describes the implementation in build 1.0 (11), not a claim of physical-device validation. TestFlight state below was verified on that date and may change.
+Updated September 12, 2026. This describes the implementation in build 1.0 (12), not a claim of physical-device validation. Dated release evidence below may change.
 
 ## Decision
 
@@ -20,10 +20,11 @@ A custom backend would be warranted for Android support, administrative audit tr
 
 - One active circle per installation. A joined shared zone takes precedence over an accidentally created owner zone during migration.
 - Owner writes use the private database. Joined members use the shared database, with the owner's actual zone ID.
-- The owner prepares a saved CKShare before showing UICloudSharingController. This avoids the former empty preparation sheet.
-- Invitations use private access to selected Apple accounts, not public read/write bearer links. Owners can manage participants in Apple's sharing sheet.
+- Invite family collects an Apple Account email or international phone number, optionally through the system's contact-property picker. The owner saves a private CKShare, resolves the recipient with CloudKit, adds read/write participation, saves again, and checks the returned participant before offering delivery. Unknown iCloud identities fail closed because direct in-app acceptance cannot perform Apple's out-of-network email-vetting flow.
+- The ordinary Messages/share sheet sends a Whereabouts entry-page URL, not Apple's app-selecting iCloud URL. Invitations use private access to selected Apple accounts, not public read/write bearer links. Owners can still manage and revoke participants in Apple's sharing sheet, which is prepared before presentation.
 - AppDelegate, UIWindowSceneDelegate, and SwiftUI URL callbacks receive invitations. Cold-launch metadata and invitations received before sign-in are persisted until the app is unlocked. Repeated callbacks for the same pending link are deduplicated.
 - People includes a paste-link recovery path. Only HTTPS iCloud share links are accepted; TestFlight/App Store installation links, lookalike hosts, and metadata for other CloudKit containers are rejected.
+- The public static entry page is hosted at https://lncrom.github.io/whereabouts/join/. It passes the unchanged iCloud invitation to the registered whereabouts://join handler. It uses an explicit user-tapped Open button and a fixed Whereabouts TestFlight installation link. The invitation is held in the URL fragment, never a server query parameter. The page has no analytics or network calls; CSP disables connect-src and referrers. GitHub serves static assets only, not identity, membership, or location data.
 - Opening an invitation resolves an owner preview, not automatic acceptance. The explicit Join action revalidates metadata, checks that specific acceptance result, finds the expected shared zone, and successfully reads it before reporting a verified connection.
 - Own invitations explain that the recipient must open them on their phone. Repeated acceptance does not create additional circles. Failed joins retain the invitation for retry.
 - Metadata lookup, join confirmation, and share preparation have a 25-second UI timeout. Generation checks ignore late results after replacement, cancellation, timeout, or an iCloud account change. Apple's request may still complete server-side; retry can recover an already-accepted share.
@@ -82,6 +83,14 @@ Whereabouts' signed 1.0 (10) package already contains only its intended containe
 
 Before release, check the App ID container assignments, provisioning profiles, and signed app entitlements. Include a real invitation test on a phone with the developer's other apps installed, and verify both the invitation's displayed app identity and the app launched by its link.
 
+### Confirmed Routing Failure on September 12
+
+The user's failing link was resolved directly against Apple's share-resolution service, using the same read-only operation as iCloud's web client. Its response named container iCloud.com.lancecromwell.Whereabouts and environment production, with publicPermission NONE, but its bundleInfo contained only com.lancecromwell.cigarcurator and Cigar Curator's App Store destination. The real invitation, participant identities, and full response are not checked into this repository.
+
+Reloading the Cigar Curator App ID in Apple's live portal again showed Whereabouts unchecked and the two cigar containers checked. Correct current App ID settings therefore did not correct the observed download metadata. The specific reason Apple's catalog retained that association is unconfirmed. Build 11's in-app join improvements did not alter this pre-launch routing layer.
+
+Build 12 bypasses that lookup for newly sent invitations by using the Whereabouts entry page and custom URL handler. It does not claim to repair Apple's raw iCloud-link metadata. Old raw links, and links sent through Apple's Manage members sheet, may still have the wrong Store fallback. The same private share can be opened through the new entry page or pasted into People without deleting the circle. A recipient must still authenticate as an invited Apple Account and explicitly join and enable location sharing.
+
 ## Trust and Operating Limits
 
 Zone-wide read/write sharing treats invited members as trusted collaborators. It does not enforce that only a record's named user may modify that record. Do not describe this as a tamper-proof location service.
@@ -94,7 +103,13 @@ The test target injects LocationCloudTransport rather than bypassing production 
 
 Tests also cover circle routing, identity changes, offline replay, in-flight pause, freshness, approximate coordinates, arrival anchoring, service lifetime across locking, saved invitations after relaunch, wrong accounts/containers, read-only invites, missing shared zones, unreadable records, duplicate callbacks, cancellation, timeouts, and sharing consent on circle changes.
 
-Build 11 verification on September 12, 2026:
+Build 12 verification on September 12, 2026:
+
+- All 40 iOS tests passed on iOS 26.2 and 26.5 simulators. Two Node tests cover valid entry-link preservation and rejection of malformed, duplicate, spoofed, and script payloads.
+- The live GitHub Pages entry page rendered on an iPhone simulator. Tapping Open produced Apple's Open in Whereabouts confirmation and then the app's People invitation state. The simulator lacked an iCloud account, so this proves routing only, not real participant authorization.
+- The native recipient form was inspected, and an account error returned visibly without an empty sharing sheet. The unsigned-in error message was made actionable. The Release archive and IPA export succeeded with signature verification, Production CloudKit, production APNs, get-task-allow=false, and no DEBUG sign-in bypass strings.
+
+Earlier build 11 verification on September 12, 2026:
 
 - All 36 tests passed on iPhone 16e / iOS 26.2 and iPhone 17e / iOS 26.5 simulators, with normal Xcode test signing.
 - Manual simulator UI checks covered the invitation entry sheet, actionable rejection of an installation link, missing-iCloud recovery, a wrapped deep link, persisted recovery after termination/relaunch, and portrait/landscape layouts. These checks used the DEBUG-only local sign-in bypass, not real Apple identities.

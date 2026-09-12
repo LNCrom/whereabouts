@@ -1,4 +1,5 @@
 import CloudKit
+import ContactsUI
 import SwiftUI
 import UIKit
 
@@ -12,6 +13,7 @@ struct PeopleView: View {
     @State private var inviteError: String?
     @State private var isEnteringInvite = false
     @State private var isConfirmingSwitch = false
+    @State private var isInvitingFamily = false
 
     var body: some View {
         List {
@@ -19,6 +21,12 @@ struct PeopleView: View {
             Section("Family circle") {
                 LabeledContent("Connection", value: cloudSharing.circleConnectionSummary)
                 if (!cloudSharing.hasActiveCircle || cloudSharing.isCircleOwner) && !cloudSharing.hasPendingInvite {
+                    Button { isInvitingFamily = true } label: {
+                        Label("Invite family", systemImage: "person.badge.plus")
+                    }
+                    .disabled(cloudSharing.isPreparingShare)
+                }
+                if cloudSharing.isCircleOwner && !cloudSharing.hasPendingInvite {
                     Button {
                         cloudSharing.prepareShare { result in
                             switch result {
@@ -27,8 +35,8 @@ struct PeopleView: View {
                             }
                         }
                     } label: {
-                        Label(cloudSharing.isPreparingShare ? "Preparing invitation..." : cloudSharing.sharingTitle,
-                              systemImage: "person.badge.plus")
+                        Label(cloudSharing.isPreparingShare ? "Preparing..." : "Manage members",
+                              systemImage: "person.2.badge.gearshape")
                     }
                     .disabled(cloudSharing.isPreparingShare)
                 } else if cloudSharing.hasActiveCircle && !cloudSharing.isCircleOwner {
@@ -105,6 +113,13 @@ struct PeopleView: View {
             }
         }
         .navigationTitle("People")
+        .onChange(of: cloudSharing.inviteEventID) { _, _ in
+            if cloudSharing.hasPendingInvite {
+                preparedShare = nil
+                isInvitingFamily = false
+                isEnteringInvite = false
+            }
+        }
         .refreshable { _ = await cloudSharing.refresh() }
         .sheet(item: $preparedShare) { prepared in
             CloudInviteController(share: prepared.share, container: prepared.container, store: cloudSharing) { inviteError = $0 }
@@ -115,6 +130,7 @@ struct PeopleView: View {
                 cloudSharing.inspectPendingInvite()
             }
         }
+        .sheet(isPresented: $isInvitingFamily) { InviteFamilyView(cloud: cloudSharing) }
         .confirmationDialog("Switch family circles?", isPresented: $isConfirmingSwitch, titleVisibility: .visible) {
             Button("Switch and join") { cloudSharing.acceptPendingInvite() }
             Button("Cancel", role: .cancel) {}
@@ -178,6 +194,100 @@ struct PeopleView: View {
     private var appVersion: String {
         let info = Bundle.main.infoDictionary ?? [:]
         return "\(info["CFBundleShortVersionString"] as? String ?? "?") (\(info["CFBundleVersion"] as? String ?? "?"))"
+    }
+}
+
+private struct InviteFamilyView: View {
+    @ObservedObject var cloud: CloudLocationSharingStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var recipient = ""
+    @State private var error: String?
+    @State private var entryURL: URL?
+    @State private var choosingContact = false
+    @State private var showingDelivery = false
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("Apple Account email or phone", text: $recipient)
+                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                        .keyboardType(.emailAddress).privacySensitive()
+                        .disabled(cloud.isPreparingShare)
+                    Button { choosingContact = true } label: { Label("Choose from Contacts", systemImage: "person.crop.circle") }
+                        .disabled(cloud.isPreparingShare)
+                    Button {
+                        do {
+                            let person = try InvitationRecipient(recipient)
+                            error = nil
+                            entryURL = nil
+                            cloud.prepareShare(recipient: person) { result in
+                                switch result {
+                                case .success(let value):
+                                    entryURL = value.entryURL
+                                    showingDelivery = value.entryURL != nil
+                                case .failure(let failure): error = CloudLocationSharingStore.message(for: failure)
+                                }
+                            }
+                        } catch { self.error = error.localizedDescription }
+                    } label: {
+                        HStack {
+                            if cloud.isPreparingShare { ProgressView() }
+                            Label(cloud.isPreparingShare ? "Preparing invitation..." : "Prepare and send invitation", systemImage: "paperplane")
+                        }
+                    }
+                    .disabled(cloud.isPreparingShare || recipient.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } header: { Text("Family member") }
+                  footer: { Text("Use the Apple Account shown in their iPhone Settings. Only that account is invited. Joining does not turn on location sharing.") }
+                if let error { Section { Text(error).foregroundStyle(.red) } }
+                if let entryURL {
+                    Section("Invitation ready") {
+                        ShareLink(item: entryURL) { Label("Send invitation again", systemImage: "square.and.arrow.up") }
+                    }
+                }
+            }
+            .navigationTitle("Invite family")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() }.disabled(cloud.isPreparingShare) } }
+            .onChange(of: recipient) { _, _ in entryURL = nil; error = nil }
+            .sheet(isPresented: $choosingContact) {
+                InvitationContactPicker { value in recipient = value; choosingContact = false }
+            }
+            .sheet(isPresented: $showingDelivery) {
+                if let entryURL { InvitationDeliveryController(url: entryURL) }
+            }
+            .interactiveDismissDisabled(cloud.isPreparingShare)
+        }
+    }
+}
+
+private struct InvitationDeliveryController: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: ["Join my Whereabouts family circle: \(url.absoluteString)"], applicationActivities: nil)
+    }
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
+}
+
+private struct InvitationContactPicker: UIViewControllerRepresentable {
+    let select: (String) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(select: select) }
+    func makeUIViewController(context: Context) -> CNContactPickerViewController {
+        let picker = CNContactPickerViewController()
+        picker.delegate = context.coordinator
+        picker.displayedPropertyKeys = [CNContactEmailAddressesKey, CNContactPhoneNumbersKey]
+        picker.predicateForSelectionOfContact = NSPredicate(value: false)
+        picker.predicateForSelectionOfProperty = NSPredicate(format: "key IN %@", [CNContactEmailAddressesKey, CNContactPhoneNumbersKey])
+        return picker
+    }
+    func updateUIViewController(_ controller: CNContactPickerViewController, context: Context) {}
+    final class Coordinator: NSObject, CNContactPickerDelegate {
+        let select: (String) -> Void
+        init(select: @escaping (String) -> Void) { self.select = select }
+        func contactPicker(_ picker: CNContactPickerViewController, didSelect property: CNContactProperty) {
+            if let email = property.value as? String { select(email) }
+            else if let phone = property.value as? CNPhoneNumber { select(phone.stringValue) }
+        }
     }
 }
 

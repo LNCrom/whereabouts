@@ -100,6 +100,58 @@ final class InvitationTests: XCTestCase {
         XCTAssertEqual(transport.resolveCount, 0)
     }
 
+    func testEntryLinkKeepsPrivateInvitationOutOfRequestAndRoundTrips() throws {
+        let entry = try InvitationLink.entryURL(for: url)
+        XCTAssertEqual(entry.host, "lncrom.github.io")
+        XCTAssertNil(entry.query)
+        XCTAssertEqual(entry.path, "/whereabouts/join")
+        XCTAssertNotNil(entry.fragment)
+        XCTAssertEqual(try InvitationLink.parse(entry.absoluteString), url)
+        XCTAssertEqual(try InvitationLink.parse("Join our circle: " + entry.absoluteString), url)
+        XCTAssertThrowsError(try InvitationLink.entryURL(for: URL(string: "https://apps.apple.com/app/id123")!))
+        XCTAssertThrowsError(try InvitationLink.parse(entry.absoluteString.replacingOccurrences(of: "https://lncrom", with: "http://lncrom")))
+        XCTAssertThrowsError(try InvitationLink.parse(entry.absoluteString.replacingOccurrences(of: "lncrom.github.io", with: "lncrom.github.io.evil.test")))
+    }
+
+    func testNamedRecipientIsAddedBeforeLinkIsReturned() async throws {
+        let transport = InviteTransport(user: "alice")
+        let cloud = store(transport)
+        let sent = expectation(description: "Private recipient invitation saved")
+        cloud.prepareShare(recipient: .email("bob@example.com")) { result in
+            switch result {
+            case .success(let value):
+                XCTAssertEqual(transport.invited, [.email("bob@example.com")])
+                XCTAssertEqual(value.entryURL?.host, "lncrom.github.io")
+                XCTAssertTrue(cloud.isCircleVerified)
+            case .failure(let error): XCTFail(error.localizedDescription)
+            }
+            sent.fulfill()
+        }
+        await fulfillment(of: [sent], timeout: 3)
+        XCTAssertFalse(transport.server.accepted.contains("bob"), "Inviting must not accept for the recipient")
+    }
+
+    func testFailedRecipientLookupNeverProducesDeliveryLink() async {
+        let transport = InviteTransport(user: "alice")
+        transport.inviteFailure = InvitationError.recipientNotFound
+        let cloud = store(transport)
+        let failed = expectation(description: "Recipient not found")
+        cloud.prepareShare(recipient: .email("missing@example.com")) { result in
+            if case .success = result { XCTFail("Do not offer an unapproved invitation for delivery") }
+            failed.fulfill()
+        }
+        await fulfillment(of: [failed], timeout: 3)
+        XCTAssertTrue(transport.invited.isEmpty)
+    }
+
+    func testRecipientValidationAcceptsAppleEmailAndInternationalPhone() throws {
+        XCTAssertEqual(try InvitationRecipient(" bob@example.com "), .email("bob@example.com"))
+        XCTAssertEqual(try InvitationRecipient("+1 (425) 555-0123"), .phone("+14255550123"))
+        for value in ["", "@example.com", "bob@", "bob @example.com", "12345", "+1abc2345678", "bob@example.com@evil.test"] {
+            XCTAssertThrowsError(try InvitationRecipient(value))
+        }
+    }
+
     func testInvalidReplacementCannotResumePreviousInvitation() async {
         let transport = InviteTransport()
         let cloud = store(transport)
@@ -326,6 +378,8 @@ final class InvitationTests: XCTestCase {
     var createDelay: Duration = .zero
     private var readCount = 0
     var beforeAccept: (() -> Void)?
+    var invited: [InvitationRecipient] = []
+    var inviteFailure: Error?
     init(user: String = "bob", server: InviteServer? = nil) { self.user = user; self.server = server ?? InviteServer() }
     func accountID() async throws -> String { user }
     func invitation(for url: URL) async throws -> CircleInvitation {
@@ -342,6 +396,13 @@ final class InvitationTests: XCTestCase {
         let acceptingUser = user
         beforeAccept?()
         server.accepted.insert(acceptingUser)
+    }
+    func invite(_ recipient: InvitationRecipient, to share: CKShare, in scope: CircleScope) async throws -> URL {
+        if let inviteFailure { throw inviteFailure }
+        XCTAssertTrue(scope.isOwner)
+        XCTAssertEqual(share.publicPermission, .none)
+        invited.append(recipient)
+        return URL(string: "https://www.icloud.com/share/test-family-invitation")!
     }
     func zones(shared: Bool) async throws -> [CKRecordZone] {
         if shared && exposeAcceptedZone && server.accepted.contains(user) { return [CKRecordZone(zoneID: sharedScope.zoneID)] }

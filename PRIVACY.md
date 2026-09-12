@@ -1,6 +1,6 @@
 # Whereabouts Privacy Policy
 
-Effective date: September 11, 2026
+Effective date: September 12, 2026
 
 Whereabouts is a personal family location dashboard built around consent and member-controlled sharing.
 
@@ -18,6 +18,8 @@ Whereabouts uses consent-based location sharing. When you create or accept a Whe
 Whereabouts does not sell personal data and does not use location data for advertising.
 
 Contact selection, when used, helps you choose people to invite. Whereabouts does not upload your address book to the developer.
+
+When you prepare an invitation, the selected email address or phone number is sent to Apple's CloudKit service to identify and authorize the recipient. The public invitation entry page is hosted by GitHub Pages. Its code handles the private invitation in the URL fragment on your device and does not send that value, location data, or recipient contact details to the website server. The page contains no analytics and stores no invitation in browser storage. Like other website hosts, GitHub may receive ordinary connection information such as the IP address and browser information when serving the page.
 
 ## Location Data
 

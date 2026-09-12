@@ -81,7 +81,7 @@ struct SettingsView: View {
             Section {
                 PermissionRow(
                     title: "iCloud circle",
-                    value: cloudSharing.hasActiveCircle ? "Active" : "Not joined",
+                    value: cloudSharing.circleConnectionSummary,
                     systemImage: "icloud.fill",
                     tint: .blue
                 )

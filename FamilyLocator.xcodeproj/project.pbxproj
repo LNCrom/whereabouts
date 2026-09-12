@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		1A0000342C17500100AA0001 = {isa = PBXBuildFile; fileRef = 1A0000342C17500100AA0000; };
+		1A0000352C17500100AA0001 = {isa = PBXBuildFile; fileRef = 1A0000352C17500100AA0000; };
 		1A0000012C17500100AA0001 /* FamilyLocatorApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000012C17500100AA0000 /* FamilyLocatorApp.swift */; };
 		1A0000022C17500100AA0001 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000022C17500100AA0000 /* Models.swift */; };
 		1A0000032C17500100AA0001 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A0000032C17500100AA0000 /* ContentView.swift */; };
@@ -39,6 +41,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		1A0000342C17500100AA0000 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CircleInvitation.swift; sourceTree = "<group>"; };
+		1A0000352C17500100AA0000 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InvitationTests.swift; sourceTree = "<group>"; };
 		1A0000012C17500100AA0000 /* FamilyLocatorApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FamilyLocatorApp.swift; sourceTree = "<group>"; };
 		1A0000022C17500100AA0000 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		1A0000032C17500100AA0000 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -87,7 +91,7 @@
 		};
 		1A00002C2C17500100AA0000 /* FamilyLocatorTests */ = {
 			isa = PBXGroup;
-			children = (1A0000212C17500100AA0000 /* LocationSharingStoreTests.swift */, 1A0000332C17500100AA0000 /* SharingArchitectureTests.swift */,);
+			children = (1A0000212C17500100AA0000 /* LocationSharingStoreTests.swift */, 1A0000332C17500100AA0000 /* SharingArchitectureTests.swift */, 1A0000352C17500100AA0000,);
 			path = FamilyLocatorTests;
 			sourceTree = "<group>";
 		};
@@ -96,6 +100,7 @@
 			children = (
 				1A0000012C17500100AA0000 /* FamilyLocatorApp.swift */,
 				1A0000302C17500100AA0000 /* CloudKitTransport.swift */,
+				1A0000342C17500100AA0000,
 				1A0000312C17500100AA0000 /* SharingPersistence.swift */,
 				1A0000322C17500100AA0000 /* SharingRuntime.swift */,
 				1A00001C2C17500100AA0000 /* AuthStore.swift */,
@@ -218,6 +223,7 @@
 			files = (
 				1A0000012C17500100AA0001 /* FamilyLocatorApp.swift in Sources */,
 				1A0000302C17500100AA0001 /* CloudKitTransport.swift in Sources */,
+				1A0000342C17500100AA0001,
 				1A0000312C17500100AA0001 /* SharingPersistence.swift in Sources */,
 				1A0000322C17500100AA0001 /* SharingRuntime.swift in Sources */,
 				1A0000022C17500100AA0001 /* Models.swift in Sources */,
@@ -234,7 +240,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		1A0000242C17500100AA0000 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (1A0000212C17500100AA0001 /* LocationSharingStoreTests.swift in Sources */, 1A0000332C17500100AA0001 /* SharingArchitectureTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
+		1A0000242C17500100AA0000 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (1A0000212C17500100AA0001 /* LocationSharingStoreTests.swift in Sources */, 1A0000332C17500100AA0001 /* SharingArchitectureTests.swift in Sources */, 1A0000352C17500100AA0001,); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -368,7 +374,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FamilyLocator/FamilyLocator.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 92QY292282;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FamilyLocator/Info.plist;
@@ -393,7 +399,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = FamilyLocator/FamilyLocator.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 10;
+				CURRENT_PROJECT_VERSION = 11;
 				DEVELOPMENT_TEAM = 92QY292282;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = FamilyLocator/Info.plist;

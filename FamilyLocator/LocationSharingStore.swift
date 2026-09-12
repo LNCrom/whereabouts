@@ -106,6 +106,12 @@ final class LocationSharingStore: NSObject, ObservableObject {
         locationManager.requestWhenInUseAuthorization()
     }
 
+    func enableSharing() {
+        isLiveSharingEnabled = true
+        if authorizationStatus == .notDetermined { requestWhenInUsePermission() }
+        else { refreshCurrentLocation(requestPermission: false) }
+    }
+
     func requestAlwaysPermission() {
         locationManager.requestAlwaysAuthorization()
     }

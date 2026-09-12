@@ -34,7 +34,8 @@ struct ContentView: View {
                     members: $familyMembers,
                     selectedMember: $selectedMember,
                     cloudSharing: cloudSharing,
-                    locationSharing: locationSharing
+                    locationSharing: locationSharing,
+                    onShowMap: { selectedTab = .map }
                 )
             }
             .tabItem {
@@ -61,6 +62,8 @@ struct ContentView: View {
             cloudSharing.fetchSharedLocations()
             if let inviteEventID = cloudSharing.inviteEventID {
                 handleInviteEvent(inviteEventID)
+            } else if !cloudSharing.hasActiveCircle || cloudSharing.remoteMembers.isEmpty {
+                selectedTab = .people
             }
             updateSelectionIfNeeded(with: visibleMembers)
         }

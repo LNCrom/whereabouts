@@ -32,7 +32,7 @@ final class SharingRuntime: ObservableObject {
             }
         }.store(in: &subscriptions)
         // Published values emit before storage changes. Reconcile on the next main turn.
-        Publishers.Merge3(location.objectWillChange, auth.objectWillChange, cloud.$circleRevision.map { _ in () }.eraseToAnyPublisher())
+        Publishers.Merge3(location.objectWillChange, auth.objectWillChange, cloud.objectWillChange)
             .receive(on: DispatchQueue.main).sink { [weak self] in self?.reconcile() }.store(in: &subscriptions)
         location.$isLiveSharingEnabled.removeDuplicates().dropFirst().sink { [weak self] enabled in
             if !enabled { self?.cloud.removePublishedLocation() }
@@ -41,8 +41,11 @@ final class SharingRuntime: ObservableObject {
             self?.location.stopSharing()
             self?.auth.signOut()
         }.store(in: &subscriptions)
+        cloud.$sharingConsentResetID.compactMap { $0 }.sink { [weak self] _ in
+            self?.location.stopSharing()
+        }.store(in: &subscriptions)
         auth.$isUnlocked.removeDuplicates().filter { $0 }.receive(on: DispatchQueue.main).sink { [weak self] _ in
-            self?.cloud.acceptPendingInvite()
+            self?.cloud.inspectPendingInvite()
         }.store(in: &subscriptions)
         if monitorsEnabled {
             NotificationCenter.default.publisher(for: .CKAccountChanged).sink { [weak self] _ in
@@ -79,12 +82,12 @@ final class SharingRuntime: ObservableObject {
             }
         }
         reconcile()
-        if auth.canEnterApp { cloud.acceptPendingInvite() }
+        if auth.canEnterApp, cloud.invitationPhase == .idle { cloud.inspectPendingInvite() }
         if location.canShareLocation { location.refreshCurrentLocation(requestPermission: false) }
     }
 
     func reconcile() {
-        let allowed = auth.isSignedIn && auth.profile?.id == cloud.accountID && cloud.accountID != nil && cloud.hasActiveCircle
+        let allowed = auth.isSignedIn && auth.profile?.id == cloud.accountID && cloud.accountID != nil && cloud.hasActiveCircle && cloud.isCircleVerified
         let consentEnded = !auth.isSignedIn || !location.isLiveSharingEnabled ||
             location.authorizationStatus == .denied || location.authorizationStatus == .restricted
         if consentEnded, !removedForConsentState, cloud.accountID != nil, cloud.hasActiveCircle {
@@ -98,6 +101,11 @@ final class SharingRuntime: ObservableObject {
 
     func receiveInvite(_ metadata: CKShare.Metadata) {
         cloud.receiveInvite(metadata)
-        if auth.canEnterApp { cloud.acceptPendingInvite() }
+        if auth.canEnterApp { cloud.inspectPendingInvite() }
+    }
+
+    func receiveInvitationURL(_ url: URL) {
+        cloud.receiveInvitationLink(url.absoluteString)
+        if auth.canEnterApp { cloud.inspectPendingInvite() }
     }
 }

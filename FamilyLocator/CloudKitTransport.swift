@@ -18,14 +18,14 @@ protocol LocationCloudTransport {
     func records(in scope: CircleScope) async throws -> [CKRecord]
     func delete(_ id: CKRecord.ID, in scope: CircleScope) async throws
     func leave(_ scope: CircleScope) async throws
-    func metadata(for url: URL) async throws -> CKShare.Metadata
-    func accept(_ metadata: CKShare.Metadata) async throws
+    func invitation(for url: URL) async throws -> CircleInvitation
+    func accept(_ invitation: CircleInvitation) async throws
     func subscribe(shared: Bool) async throws
 }
 
 @MainActor
 final class CloudKitTransport: LocationCloudTransport {
-    static let containerID = "iCloud.com.lancecromwell.Whereabouts"
+    nonisolated static let containerID = "iCloud.com.lancecromwell.Whereabouts"
     let container = CKContainer(identifier: containerID)
 
     private func database(_ scope: CircleScope) -> CKDatabase {
@@ -77,11 +77,18 @@ final class CloudKitTransport: LocationCloudTransport {
         catch let error as CKError where [.zoneNotFound, .userDeletedZone].contains(error.code) { }
     }
 
-    func metadata(for url: URL) async throws -> CKShare.Metadata {
-        try await container.shareMetadata(for: url)
+    func invitation(for url: URL) async throws -> CircleInvitation {
+        try CircleInvitation(await container.shareMetadata(for: url))
     }
 
-    func accept(_ metadata: CKShare.Metadata) async throws {
+    func accept(_ invitation: CircleInvitation) async throws {
+        // Revalidate the server's current invitation rather than trusting a cached preview.
+        let metadata = try await container.shareMetadata(for: invitation.url)
+        let current = try CircleInvitation(metadata)
+        try current.validate()
+        guard current.scope == invitation.scope else { throw InvitationError.changed }
+        guard current.canWrite else { throw InvitationError.readOnly }
+        if current.isAccepted { return }
         let results = try await container.accept([metadata])
         guard let result = results[metadata] else { throw CKError(.internalError) }
         _ = try result.get()

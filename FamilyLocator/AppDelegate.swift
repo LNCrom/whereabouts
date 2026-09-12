@@ -18,6 +18,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 
     func application(_ application: UIApplication, configurationForConnecting session: UISceneSession,
                      options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        if let metadata = options.cloudKitShareMetadata { SharingRuntime.shared.receiveInvite(metadata) }
         let configuration = UISceneConfiguration(name: nil, sessionRole: session.role)
         configuration.delegateClass = SharingSceneDelegate.self
         return configuration
@@ -36,9 +37,19 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 final class SharingSceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         if let metadata = connectionOptions.cloudKitShareMetadata { SharingRuntime.shared.receiveInvite(metadata) }
+        else if let url = connectionOptions.urlContexts.first?.url { SharingRuntime.shared.receiveInvitationURL(url) }
+        else if let url = connectionOptions.userActivities.first?.webpageURL { SharingRuntime.shared.receiveInvitationURL(url) }
     }
 
     func windowScene(_ windowScene: UIWindowScene, userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
         SharingRuntime.shared.receiveInvite(metadata)
+    }
+
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        if let url = URLContexts.first?.url { SharingRuntime.shared.receiveInvitationURL(url) }
+    }
+
+    func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
+        if let url = userActivity.webpageURL { SharingRuntime.shared.receiveInvitationURL(url) }
     }
 }

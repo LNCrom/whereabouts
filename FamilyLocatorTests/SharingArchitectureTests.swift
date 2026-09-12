@@ -285,7 +285,7 @@ private final class FakeCloud: LocationCloudTransport {
     }
     func delete(_ id: CKRecord.ID, in scope: CircleScope) async throws { try check(); server.records.removeValue(forKey: prefix(scope) + id.recordName) }
     func leave(_ scope: CircleScope) async throws { try check(); left.append(scope) }
-    func metadata(for url: URL) async throws -> CKShare.Metadata { throw CKError(.unknownItem) }
-    func accept(_ metadata: CKShare.Metadata) async throws { try check() }
+    func invitation(for url: URL) async throws -> CircleInvitation { throw CKError(.unknownItem) }
+    func accept(_ invitation: CircleInvitation) async throws { try check() }
     func subscribe(shared: Bool) async throws { try check() }
 }

@@ -1,6 +1,6 @@
 # Whereabouts Architecture
 
-Updated September 11, 2026. This describes the implementation in build 1.0 (10), not a claim of physical-device validation.
+Updated September 12, 2026. This describes the implementation in build 1.0 (11), not a claim of physical-device validation or TestFlight availability.
 
 ## Decision
 
@@ -22,8 +22,12 @@ A custom backend would be warranted for Android support, administrative audit tr
 - Owner writes use the private database. Joined members use the shared database, with the owner's actual zone ID.
 - The owner prepares a saved CKShare before showing UICloudSharingController. This avoids the former empty preparation sheet.
 - Invitations use private access to selected Apple accounts, not public read/write bearer links. Owners can manage participants in Apple's sharing sheet.
-- AppDelegate and UIWindowSceneDelegate receive invitations. Cold-launch metadata and invitations received before sign-in are retained until the app is unlocked.
-- Accepting an invite checks the result for that specific share. Own invitations and repeated acceptance do not create additional circles.
+- AppDelegate, UIWindowSceneDelegate, and SwiftUI URL callbacks receive invitations. Cold-launch metadata and invitations received before sign-in are persisted until the app is unlocked. Repeated callbacks for the same pending link are deduplicated.
+- People includes a paste-link recovery path. Only HTTPS iCloud share links are accepted; TestFlight/App Store installation links, lookalike hosts, and metadata for other CloudKit containers are rejected.
+- Opening an invitation resolves an owner preview, not automatic acceptance. The explicit Join action revalidates metadata, checks that specific acceptance result, finds the expected shared zone, and successfully reads it before reporting a verified connection.
+- Own invitations explain that the recipient must open them on their phone. Repeated acceptance does not create additional circles. Failed joins retain the invitation for retry.
+- Metadata lookup, join confirmation, and share preparation have a 25-second UI timeout. Generation checks ignore late results after replacement, cancellation, timeout, or an iCloud account change. Apple's request may still complete server-side; retry can recover an already-accepted share.
+- Switching circles requires confirmation and pauses this phone's sharing. Enabling sharing remains a separate, explicit consent action. A canceled join does not undo membership Apple may already have accepted, but it does not enable location publication.
 - Membership is displayed separately from location publication. A joined person can have no location because sharing or permission is off.
 - Leaving a joined circle deletes its zone from the shared database, removing the participant's access. Deleting an owned zone removes the circle for everyone.
 - Existing older public links become private when the owner opens invitation management in this build. Existing participants remain collaborators. The owner must issue private invitations for new members.
@@ -31,7 +35,7 @@ A custom backend would be warranted for Android support, administrative audit tr
 ## Location Publication
 
 - New installations start with sharing off.
-- Collection requires a signed-in profile matching the verified iCloud account, circle membership, sharing enabled, and iOS authorization.
+- Collection requires a signed-in profile matching the verified iCloud account, verified access to the active circle, sharing enabled, and iOS authorization. A saved circle identifier alone is not sufficient.
 - Always authorization enables background updates, significant-change monitoring, and visit monitoring. The app restarts these services after launch once identity is validated.
 - Approximate sharing rounds coordinates before any upload and suppresses street-level reverse geocoding.
 - Only the newest unsent fix is retained. Sample timestamps, rather than upload times, indicate freshness.
@@ -86,14 +90,24 @@ No iOS application can guarantee continuous updates when the phone is offline, p
 
 ## Verification
 
-The test target injects LocationCloudTransport rather than bypassing production synchronization through a shared local JSON file. Two test personas exercise the actual outbox and record-mapping code against an in-memory transport. Tests cover circle routing, identity changes, offline replay, in-flight pause, freshness, approximate coordinates, arrival anchoring, and service lifetime across locking.
+The test target injects LocationCloudTransport rather than bypassing production synchronization through a shared local JSON file. Two test personas exercise the actual outbox and record-mapping code against an in-memory transport. The invitation fixture exposes the shared zone only after acceptance: owner share preparation, recipient preview, explicit Join, zone/read confirmation, and bidirectional publication are exercised without directly activating the recipient's circle. This fake does not reproduce Apple's identity, permissions, routing, or delivery services.
+
+Tests also cover circle routing, identity changes, offline replay, in-flight pause, freshness, approximate coordinates, arrival anchoring, service lifetime across locking, saved invitations after relaunch, wrong accounts/containers, read-only invites, missing shared zones, unreadable records, duplicate callbacks, cancellation, timeouts, and sharing consent on circle changes.
+
+Build 11 verification on September 12, 2026:
+
+- All 36 tests passed on iPhone 16e / iOS 26.2 and iPhone 17e / iOS 26.5 simulators, with normal Xcode test signing.
+- Manual simulator UI checks covered the invitation entry sheet, actionable rejection of an installation link, missing-iCloud recovery, a wrapped deep link, persisted recovery after termination/relaunch, and portrait/landscape layouts. These checks used the DEBUG-only local sign-in bypass, not real Apple identities.
+- The Release archive and IPA export succeeded. Signature verification passed. Exported entitlements specify only the Whereabouts container, Production CloudKit, production APNs, and get-task-allow=false. The app icon and version 1.0 (11) are present. DEBUG authentication-bypass strings are absent from the Release executable.
+- App Store Connect accepted the upload without errors. Upload acceptance alone does not prove processing, beta approval, group access, or installation on a phone.
+- No server schema change is required. A fresh command-line production-schema export could not run because this session had no CloudKit management token; this run does not establish new production-schema evidence.
 
 Simulator tests do not prove Apple's account authorization, invitation delivery, production schema, APNs delivery, or physical-device background scheduling.
 
 Before calling the family deployment verified, use two physical iPhones with separate Apple accounts and the same build:
 
 1. Owner invites the recipient's iCloud account. Confirm the real invitation is delivered.
-2. Recipient opens it from terminated, locked, and already-open app states. Confirm joined membership.
+2. Recipient opens it from terminated, locked, and already-open app states. Confirm the owner preview, tap Join, and verify Connected. Opening the owner's own link must display an explanation instead. Repeat using People > Join with invitation as a routing fallback.
 3. Enable sharing and Always location on both phones. Confirm each phone sees the other and sees successful Last sent.
 4. Lock both phones and move one between two known locations. Compare real fixes and arrival estimates.
 5. Interrupt network, reconnect, pause while offline, then reconnect again. Confirm recovery and removal.

@@ -17,6 +17,10 @@ struct FamilyLocatorApp: App {
                     SignInView(auth: auth)
                 }
             }
+            .onOpenURL { SharingRuntime.shared.receiveInvitationURL($0) }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                if let url = activity.webpageURL { SharingRuntime.shared.receiveInvitationURL(url) }
+            }
             .onChange(of: scenePhase) { _, newPhase in
                 SharingRuntime.shared.phaseChanged(newPhase)
             }

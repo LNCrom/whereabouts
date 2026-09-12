@@ -17,6 +17,13 @@ final class CloudLocationSharingStore: ObservableObject {
     @Published private(set) var participants: [CircleParticipant] = []
     @Published private(set) var lastPublishedAt: Date?
     @Published private(set) var pushStatus = "Waiting for iCloud"
+    @Published private(set) var invitation: CircleInvitation?
+    @Published private(set) var invitationPhase: InvitationPhase = .idle
+    @Published private(set) var isCircleVerified = false
+    @Published private(set) var lastReceivedAt: Date?
+    @Published private(set) var connectionError: String?
+    @Published private(set) var uploadError: String?
+    @Published private(set) var sharingConsentResetID: UUID?
 
     private let transport: any LocationCloudTransport
     private let persistence: SharingPersistence
@@ -29,17 +36,23 @@ final class CloudLocationSharingStore: ObservableObject {
     private var retryAttempt = 0
     private var retryTask: Task<Void, Never>?
     private var sessionGeneration = UUID()
-    private var pendingMetadata: CKShare.Metadata?
+    private var inviteGeneration = UUID()
+    private var inviteWatchdog: Task<Void, Never>?
+    private let invitationTimeout: Duration
+    private var sharePreparationID = UUID()
+    private var shareWatchdog: Task<Void, Never>?
     private var storageError: Error?
     private var verifiedAt: Date?
     private var subscribedAccount: String?
     private let addressResolver: (CLLocation) async -> String
 
     init(defaults: UserDefaults = .standard, transport: (any LocationCloudTransport)? = nil,
-         persistence: SharingPersistence = .standard, addressResolver: ((CLLocation) async -> String)? = nil) {
+         persistence: SharingPersistence = .standard, addressResolver: ((CLLocation) async -> String)? = nil,
+         invitationTimeout: Duration = .seconds(25)) {
         self.transport = transport ?? CloudKitTransport()
         self.persistence = persistence
         self.addressResolver = addressResolver ?? Self.resolveAddress
+        self.invitationTimeout = invitationTimeout
         do { state = try persistence.load() }
         catch { state = SharingState(); storageError = error }
         // Migrate existing installs without creating a second family circle.
@@ -61,9 +74,15 @@ final class CloudLocationSharingStore: ObservableObject {
 
     var hasActiveCircle: Bool { state.scope != nil }
     var isCircleOwner: Bool { state.scope?.isOwner == true }
-    var sharingTitle: String { isCircleOwner ? "Invite or manage family" : "Create family circle" }
-    var hasPendingInvite: Bool { state.pendingInvite != nil || pendingMetadata != nil }
+    var sharingTitle: String { isCircleOwner ? "Invite family" : "Create family circle" }
+    var hasPendingInvite: Bool { state.pendingInvite != nil }
     var hasPendingUpload: Bool { state.pendingLocation != nil }
+    var invitationChangesCircle: Bool { invitation.map { state.scope != nil && state.scope != $0.scope } ?? false }
+    var circleConnectionSummary: String {
+        guard hasActiveCircle else { return "Not joined" }
+        if connectionError != nil { return "Connection interrupted" }
+        return isCircleVerified ? "Connected" : "Checking access"
+    }
 
     func updateAccountStatus() { Task { _ = await refresh() } }
 
@@ -74,12 +93,15 @@ final class CloudLocationSharingStore: ObservableObject {
         let id = try await transport.accountID()
         guard generation == sessionGeneration else { throw CancellationError() }
         if let previous = state.accountID, previous != id {
+            cancelInvitation()
             state = SharingState()
             publishingAllowed = false
             remoteMembers = []
             participants = []
             lastPublishedAt = nil
             lastPublishedLocation = nil
+            isCircleVerified = false
+            lastReceivedAt = nil
             accountChangedID = UUID()
             circleRevision += 1
         }
@@ -91,12 +113,15 @@ final class CloudLocationSharingStore: ObservableObject {
     }
 
     func accountDidChange() {
+        cancelInvitation()
         sessionGeneration = UUID()
         verifiedAt = nil
         accountID = nil
         publishingAllowed = false
         remoteMembers = []
         participants = []
+        isCircleVerified = false
+        lastReceivedAt = nil
         subscribedAccount = nil
         retryTask?.cancel()
         accountChangedID = UUID()
@@ -153,6 +178,12 @@ final class CloudLocationSharingStore: ObservableObject {
             }
             let records = try await transport.records(in: scope)
             guard state.scope == scope, accountID == id else { return false }
+            isCircleVerified = true
+            connectionError = nil
+            lastReceivedAt = Date()
+            if let own = records.first(where: { ($0["userRecordName"] as? String) == id }) {
+                lastPublishedAt = own["updatedAt"] as? Date
+            }
             remoteMembers = records.filter { $0.recordType == "WhereaboutsLocation" && ($0["userRecordName"] as? String) != id }
                 .compactMap(Self.member).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             await refreshParticipants(in: scope)
@@ -160,13 +191,14 @@ final class CloudLocationSharingStore: ObservableObject {
             startSync()
             return true
         } catch {
+            connectionError = Self.message(for: error)
             handle(error)
             return false
         }
     }
 
     private func restoreCircleIfNeeded() async throws {
-        guard state.scope == nil, state.restoreAllowed != false else { return }
+        guard state.scope == nil, state.restoreAllowed != false, !hasPendingInvite else { return }
         let shared = try await transport.zones(shared: true).filter { $0.zoneID.zoneName == "WhereaboutsFamilyCircle" }
         if shared.count == 1, let zone = shared.first {
             activate(CircleScope(zoneName: zone.zoneID.zoneName, ownerName: zone.zoneID.ownerName, isOwner: false))
@@ -186,11 +218,28 @@ final class CloudLocationSharingStore: ObservableObject {
             completion(.failure(SharingError.alreadyJoined)); return
         }
         isPreparingShare = true
+        let preparation = UUID()
+        sharePreparationID = preparation
+        shareWatchdog = Task { [weak self, invitationTimeout] in
+            do { try await Task.sleep(for: invitationTimeout) } catch { return }
+            guard let self, self.sharePreparationID == preparation else { return }
+            self.sharePreparationID = UUID()
+            self.isPreparingShare = false
+            completion(.failure(InvitationError.timedOut))
+        }
         Task {
-            defer { isPreparingShare = false }
+            defer {
+                if sharePreparationID == preparation {
+                    shareWatchdog?.cancel()
+                    shareWatchdog = nil
+                    isPreparingShare = false
+                }
+            }
             do {
                 _ = try await verifyAccount(force: true)
+                let user = accountID
                 try await restoreCircleIfNeeded()
+                guard sharePreparationID == preparation, accountID == user else { return }
                 guard !(hasActiveCircle && !isCircleOwner) else { throw SharingError.alreadyJoined }
                 let scope = state.scope ?? CircleScope(zoneName: "WhereaboutsFamilyCircle", ownerName: CKCurrentUserDefaultName, isOwner: true)
                 try await transport.createZone(scope)
@@ -201,58 +250,183 @@ final class CloudLocationSharingStore: ObservableObject {
                     share = existing
                 } catch let error as CKError where error.code == .unknownItem {
                     share = CKShare(recordZoneID: scope.zoneID)
-                    share[CKShare.SystemFieldKey.title] = "Whereabouts Family Circle" as CKRecordValue
                 }
+                guard sharePreparationID == preparation, accountID == user else { return }
+                guard !hasPendingInvite else { throw InvitationError.changed }
+                share[CKShare.SystemFieldKey.title] = "Whereabouts Family Circle" as CKRecordValue
                 share.publicPermission = .none
                 guard let saved = try await transport.save(share, in: scope) as? CKShare else { throw CKError(.internalError) }
+                guard sharePreparationID == preparation, accountID == user else { return }
+                guard !hasPendingInvite else { throw InvitationError.changed }
                 activate(scope)
+                try persist()
+                isCircleVerified = true
                 invitationMessage = nil
                 statusMessage = "Choose who to invite."
                 completion(.success((saved, (transport as? CloudKitTransport)?.container ?? CKContainer(identifier: CloudKitTransport.containerID))))
-            } catch { handle(error); completion(.failure(error)) }
+            } catch {
+                guard sharePreparationID == preparation else { return }
+                handle(error)
+                completion(.failure(error))
+            }
         }
     }
 
     func receiveInvite(_ metadata: CKShare.Metadata) {
-        guard metadata.containerIdentifier == CloudKitTransport.containerID else {
-            invitationMessage = "This invitation belongs to another app."; return
+        do {
+            let incoming = try CircleInvitation(metadata)
+            try incoming.validate()
+            receiveInvitationLink(incoming.url.absoluteString)
+        } catch {
+            cancelInvitation()
+            invitationMessage = error.localizedDescription
+            invitationPhase = .failed
+            inviteEventID = UUID()
         }
-        pendingMetadata = metadata
-        state.pendingInvite = metadata.share.url
-        invitationMessage = "Invitation received. Unlock Whereabouts to join."
-        saveOrReport()
-        inviteEventID = UUID()
     }
 
-    func acceptPendingInvite() {
-        guard inviteTask == nil, hasPendingInvite else { return }
+    func receiveInvitationLink(_ text: String) {
+        do {
+            let url = try InvitationLink.parse(text)
+            // Scene and SwiftUI callbacks can deliver the same URL during one launch.
+            if state.pendingInvite == url, invitationPhase.isBusy || invitationPhase == .ready { return }
+            cancelInvitation()
+            state.pendingInvite = url
+            guard saveOrReport() else { return }
+            invitationMessage = "Invitation saved. Continue with iCloud to review it."
+            inviteEventID = UUID()
+        } catch {
+            cancelInvitation()
+            invitationMessage = error.localizedDescription
+            invitationPhase = .failed
+            inviteEventID = UUID()
+        }
+    }
+
+    func inspectPendingInvite() {
+        guard let url = state.pendingInvite, !invitationPhase.isBusy, invitationPhase != .ready else { return }
+        let generation = beginInvitationOperation(.loading)
         inviteTask = Task {
-            defer { inviteTask = nil }
+            defer { finishInvitationOperation(generation) }
             do {
                 let user = try await verifyAccount(force: true)
-                let metadata: CKShare.Metadata
-                if let pendingMetadata { metadata = pendingMetadata }
-                else if let url = state.pendingInvite { metadata = try await transport.metadata(for: url) }
-                else { return }
-                let zone = metadata.share.recordID.zoneID
-                if metadata.participantRole == .owner || metadata.ownerIdentity.userRecordID?.recordName == user {
-                    invitationMessage = "This is your invitation. Other family members must open it on their phones."
-                } else {
-                    if metadata.participantStatus != .accepted { try await transport.accept(metadata) }
-                    guard accountID == user else { throw CKError(.notAuthenticated) }
-                    activate(CircleScope(zoneName: zone.zoneName, ownerName: zone.ownerName, isOwner: false))
-                    invitationMessage = "You joined the family circle."
+                let value = try await transport.invitation(for: url)
+                guard generation == inviteGeneration, state.pendingInvite == url, accountID == user else { return }
+                try value.validate()
+                invitation = value
+                if value.isOwner || value.ownerID == user {
+                    invitationPhase = .ownInvite
+                    invitationMessage = "This is your own invitation. The other person must open it on their iPhone."
+                    return
                 }
-                state.pendingInvite = nil
-                pendingMetadata = nil
+                guard value.canWrite else { throw InvitationError.readOnly }
+                if value.isAccepted, state.scope == value.scope, isCircleVerified {
+                    invitationPhase = .joined
+                    invitationMessage = "You are already connected to this family circle."
+                    state.pendingInvite = nil
+                    try persist()
+                    return
+                }
+                invitationPhase = .ready
+                invitationMessage = nil
+            } catch {
+                guard generation == inviteGeneration else { return }
+                invitationPhase = .failed
+                invitationMessage = Self.invitationErrorMessage(error)
+            }
+        }
+    }
+
+    // Only the explicit Join action calls this. Opening a URL or unlocking never grants sharing consent.
+    func acceptPendingInvite() {
+        guard invitationPhase == .ready, let invitation, let url = state.pendingInvite else { return }
+        let generation = beginInvitationOperation(.joining)
+        inviteTask = Task {
+            defer { finishInvitationOperation(generation) }
+            do {
+                let user = try await verifyAccount(force: true)
+                guard generation == inviteGeneration else { return }
+                try await transport.accept(invitation)
+                guard generation == inviteGeneration, accountID == user else { return }
+                let zones = try await transport.zones(shared: true)
+                guard zones.contains(where: { $0.zoneID == invitation.scope.zoneID }) else { throw InvitationError.unconfirmed }
+                // A successful accept response alone is insufficient: prove the shared database is readable.
+                _ = try await transport.records(in: invitation.scope)
+                guard generation == inviteGeneration, state.pendingInvite == url, accountID == user else { return }
+                if state.scope != invitation.scope {
+                    publishingAllowed = false
+                    sharingConsentResetID = UUID()
+                }
+                activate(invitation.scope)
                 try persist()
+                isCircleVerified = true
+                state.pendingInvite = nil
+                try persist()
+                invitationPhase = .joined
+                invitationMessage = "You joined the family circle."
                 inviteEventID = UUID()
+                finishInvitationOperation(generation)
                 _ = await refresh()
             } catch {
-                invitationMessage = "Could not join: " + Self.message(for: error)
+                guard generation == inviteGeneration else { return }
+                invitationPhase = .failed
+                invitationMessage = Self.invitationErrorMessage(error)
                 inviteEventID = UUID()
             }
         }
+    }
+
+    func cancelInvitation() {
+        inviteGeneration = UUID()
+        inviteTask?.cancel()
+        inviteTask = nil
+        inviteWatchdog?.cancel()
+        inviteWatchdog = nil
+        invitation = nil
+        invitationPhase = .idle
+        invitationMessage = nil
+        state.pendingInvite = nil
+        saveOrReport()
+    }
+
+    func waitForInvitationOperation() async { await inviteTask?.value }
+
+    private func beginInvitationOperation(_ phase: InvitationPhase) -> UUID {
+        inviteGeneration = UUID()
+        let generation = inviteGeneration
+        invitationPhase = phase
+        invitationMessage = nil
+        inviteEventID = UUID()
+        inviteWatchdog?.cancel()
+        inviteWatchdog = Task { [weak self, invitationTimeout] in
+            do { try await Task.sleep(for: invitationTimeout) } catch { return }
+            guard let self, self.inviteGeneration == generation else { return }
+            self.inviteGeneration = UUID()
+            self.inviteTask?.cancel()
+            self.inviteTask = nil
+            self.invitationPhase = .failed
+            self.invitationMessage = InvitationError.timedOut.localizedDescription
+        }
+        return generation
+    }
+
+    private func finishInvitationOperation(_ generation: UUID) {
+        guard inviteGeneration == generation else { return }
+        inviteWatchdog?.cancel()
+        inviteWatchdog = nil
+        inviteTask = nil
+    }
+
+    private static func invitationErrorMessage(_ error: Error) -> String {
+        if let ck = error as? CKError {
+            switch ck.code {
+            case .permissionFailure: return "This iCloud account is not invited. Ask the owner to invite the Apple Account used in this iPhone's iCloud Settings."
+            case .unknownItem, .zoneNotFound, .userDeletedZone: return "This invitation is no longer available. Ask the owner to send a new invitation."
+            case .networkUnavailable, .networkFailure: return "No connection to iCloud. Your invitation is saved; retry when online."
+            default: break
+            }
+        }
+        return Self.message(for: error)
     }
 
     func activate(_ scope: CircleScope) {
@@ -264,6 +438,9 @@ final class CloudLocationSharingStore: ObservableObject {
             lastPublishedAt = nil
             remoteMembers = []
             participants = []
+            isCircleVerified = false
+            lastReceivedAt = nil
+            uploadError = nil
         }
         state.scope = scope
         state.restoreAllowed = true
@@ -293,6 +470,7 @@ final class CloudLocationSharingStore: ObservableObject {
                 try await transport.leave(scope)
                 guard state.scope == scope else { return }
                 state.scope = nil
+                isCircleVerified = false
                 state.restoreAllowed = false
                 state.removals.removeAll { $0.scope == scope }
                 remoteMembers = []
@@ -338,7 +516,7 @@ final class CloudLocationSharingStore: ObservableObject {
                 try await flushOutbox(accountID: id)
                 retryAttempt = 0
             } catch is CancellationError { }
-            catch { handle(error); scheduleRetry(error) }
+            catch { uploadError = Self.message(for: error); handle(error); scheduleRetry(error) }
         }
     }
 
@@ -410,6 +588,7 @@ final class CloudLocationSharingStore: ObservableObject {
             } else {
                 lastPublishedAt = pending.sample.timestamp
                 lastPublishedLocation = pending.sample.location
+                uploadError = nil
                 statusMessage = "Your location is shared."
             }
             if state.pendingLocation?.id == pending.id { state.pendingLocation = nil }
@@ -445,6 +624,7 @@ final class CloudLocationSharingStore: ObservableObject {
                 remoteMembers = []
                 participants = []
                 state.scope = nil
+                isCircleVerified = false
                 state.restoreAllowed = false
                 state.pendingLocation = nil
                 publishingAllowed = false

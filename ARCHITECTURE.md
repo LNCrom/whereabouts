@@ -68,6 +68,16 @@ A custom backend would be warranted for Android support, administrative audit tr
 - Production signing profile: Whereabouts App Store Push 20260911
 - No new server record fields are introduced in this build.
 
+### App Identity Isolation
+
+The Whereabouts container must be assigned only to Whereabouts in Apple Developer's App ID configuration. Do not use Select All in iCloud Container Assignment. Correct source entitlements alone do not establish that the server-side app associations are isolated.
+
+On September 11, 2026, an invitation naming Cigar Curator prompted an audit. Apple's portal and Cigar Curator's distribution profile both showed the Whereabouts container assigned to that unrelated app. The Whereabouts assignment was removed from Cigar Curator, preserving its two existing cigar-related containers. Reloading both App ID configurations confirmed the separation. A replacement distribution profile, Cigar Curator App Store Isolated 20260911, was generated using the existing distribution certificate and verified to exclude Whereabouts.
+
+Whereabouts' signed 1.0 (10) package already contains only its intended container. No Whereabouts binary change was made for this configuration correction. The cross-assignment is a confirmed configuration defect, but correction of the reported invitation behavior still requires a physical-device retest.
+
+Before release, check the App ID container assignments, provisioning profiles, and signed app entitlements. Include a real invitation test on a phone with the developer's other apps installed, and verify both the invitation's displayed app identity and the app launched by its link.
+
 ## Trust and Operating Limits
 
 Zone-wide read/write sharing treats invited members as trusted collaborators. It does not enforce that only a record's named user may modify that record. Do not describe this as a tamper-proof location service.

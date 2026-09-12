@@ -108,6 +108,7 @@ Build 12 verification on September 12, 2026:
 - All 40 iOS tests passed on iOS 26.2 and 26.5 simulators. Two Node tests cover valid entry-link preservation and rejection of malformed, duplicate, spoofed, and script payloads.
 - The live GitHub Pages entry page rendered on an iPhone simulator. Tapping Open produced Apple's Open in Whereabouts confirmation and then the app's People invitation state. The simulator lacked an iCloud account, so this proves routing only, not real participant authorization.
 - The native recipient form was inspected, and an account error returned visibly without an empty sharing sheet. The unsigned-in error message was made actionable. The Release archive and IPA export succeeded with signature verification, Production CloudKit, production APNs, get-task-allow=false, and no DEBUG sign-in bypass strings.
+- App Store Connect accepted version 1.0 (12), build 68cb07a9-803e-4210-91c0-3de8750e4326. Independent API readback confirmed processing VALID, beta review APPROVED, and external status IN_BETA_TESTING with automatic tester notifications enabled. External QA, the sole existing testing group, includes build 12. English testing notes were saved and read back. This confirms TestFlight availability, not installation or successful two-account location exchange on physical phones.
 
 Earlier build 11 verification on September 12, 2026:
 
